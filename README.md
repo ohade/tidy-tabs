@@ -94,3 +94,7 @@ tidy-tabs/
 
 - **JSON parse failures**: Ollama occasionally produces invalid JSON despite `format` schema. The regex rescue extracts complete group objects from partial output.
 - **Chrome 145**: Collapsed group titles don't render. Update to Chrome 146+.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
