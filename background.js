@@ -104,6 +104,7 @@ async function handleTidy() {
 
   // Create tab groups (collapsed)
   const results = [];
+  const appliedTabIds = [];
   for (const group of classification.groups) {
     const tabIds = group.tab_ids
       .map(id => validTabs[id - 1]?.id)
@@ -113,6 +114,7 @@ async function handleTidy() {
 
     try {
       const groupId = await chrome.tabs.group({ tabIds, createProperties: { windowId: targetWindow.id } });
+      appliedTabIds.push(...tabIds);
       const color = CHROME_COLORS.includes(group.color) ? group.color : 'grey';
       console.log(`[tidy] Created groupId=${groupId}, setting title="${group.name}" color="${color}"`);
       const updated = await chrome.tabGroups.update(groupId, { title: group.name, color });
@@ -120,6 +122,14 @@ async function handleTidy() {
       results.push({ name: group.name, color, count: tabIds.length, groupId });
     } catch (err) {
       console.error(`[tidy] Group "${group.name}" failed:`, err);
+      if (appliedTabIds.length > 0) {
+        try {
+          await chrome.tabs.ungroup(appliedTabIds);
+        } catch (rollbackErr) {
+          console.error('[tidy] Rollback failed:', rollbackErr);
+        }
+      }
+      return { error: `Failed to apply group "${group.name}": ${err.message}` };
     }
   }
 

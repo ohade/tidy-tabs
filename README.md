@@ -10,9 +10,9 @@ Click the broom icon → all non-incognito windows merge into one → tabs are c
 Click broom icon
   → Merge all non-incognito windows into one
   → Collect ungrouped tab titles + URLs
-  → Send to local Ollama (Qwen 3.5-4B) in batches of 15
+  → Send to local Ollama (Qwen 3.5-4B) in batches of up to 15
   → Ollama returns JSON: { groups: [{ name, color, tab_ids }] }
-  → If >10 groups, consolidation pass merges similar groups into 5-8
+  → If >12 groups, a strict consolidation pass reduces them to 6-12
   → chrome.tabs.group() + chrome.tabGroups.update() creates named, colored groups
   → All groups collapsed — you see only group names
 ```
@@ -85,14 +85,15 @@ tidy-tabs/
 | Model | Qwen 3.5-4B | Good structured output and group naming at roughly half the 9B footprint |
 | `think: false` | Disabled thinking | 5+ min → 6s response time |
 | `num_predict: 4096` | High token limit | Prevents JSON truncation on large batches |
-| Batch size 15 | Fixed batches | Balance between quality and speed |
-| Consolidation pass | Merge >10 groups → 5-8 | Prevents 30+ tiny groups from batching |
+| Batch size 15 | Reliable structured output | Keeps Qwen 3.5-4B's JSON response stable on mixed-language tabs |
+| Consolidation pass | Strict 6-12 group partition | Rejects incomplete merges instead of creating a huge `Other` bucket |
 | No popup | Direct icon click | Arc-style UX — one click, no panel |
 | JSON regex rescue | Salvage partial output | Even malformed JSON yields usable groups |
 
 ## Known Issues
 
-- **JSON parse failures**: Ollama occasionally produces invalid JSON despite `format` schema. The regex rescue extracts complete group objects from partial output.
+- **JSON parse failures**: Ollama occasionally produces invalid JSON despite `format` schema. Rescued groups must still cover every tab exactly once; otherwise the extension retries and then fails clearly.
+- **Semantic grouping**: Topic choices are model-generated, but vague catch-all names and groups larger than 15 tabs are rejected. Recognizable browser error pages are separated into `Errors`.
 - **Chrome 145**: Collapsed group titles don't render. Update to Chrome 146+.
 
 ## License

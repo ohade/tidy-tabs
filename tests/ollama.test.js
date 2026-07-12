@@ -100,3 +100,247 @@ test('handleTidy checks Ollama before moving tabs', async () => {
   assert.equal(result.error, 'Model qwen3.5:4b is not installed. Run: ollama pull qwen3.5:4b');
   assert.equal(moveCalls, 0);
 });
+
+function ollamaResponse(groups) {
+  return {
+    ok: true,
+    json: async () => ({
+      message: { content: JSON.stringify({ groups }) },
+      total_duration: 1e9,
+      eval_count: 1
+    })
+  };
+}
+
+test('classifyTabs retries an incomplete batch instead of creating Other', async () => {
+  let fetchCalls = 0;
+  const context = loadScript('lib/ollama.js', {
+    fetch: async () => {
+      fetchCalls += 1;
+      if (fetchCalls === 1) {
+        return ollamaResponse([{ name: 'Work', color: 'blue', tab_ids: [1, 2] }]);
+      }
+      return ollamaResponse([
+        { name: 'Work', color: 'blue', tab_ids: [1, 2] },
+        { name: 'Reading', color: 'green', tab_ids: [3, 4] }
+      ]);
+    }
+  });
+  context.tabs = Array.from({ length: 4 }, (_, index) => ({
+    title: `Tab ${index + 1}`,
+    url: `https://site${index + 1}.example/path`
+  }));
+
+  const result = await vm.runInContext('classifyTabs(tabs, DEFAULT_MODEL)', context);
+  assert.equal(fetchCalls, 2);
+  assert.equal(result.groups.some(group => group.name === 'Other'), false);
+  assert.equal(
+    JSON.stringify([...result.groups.flatMap(group => group.tab_ids)].sort((a, b) => a - b)),
+    JSON.stringify([1, 2, 3, 4])
+  );
+});
+
+test('classifyTabs rejects repeatedly incomplete batch output', async () => {
+  const context = loadScript('lib/ollama.js', {
+    fetch: async () => ollamaResponse([{ name: 'Work', color: 'blue', tab_ids: [1, 2] }])
+  });
+  context.tabs = Array.from({ length: 4 }, (_, index) => ({
+    title: `Tab ${index + 1}`,
+    url: `https://site${index + 1}.example/path`
+  }));
+
+  await assert.rejects(
+    vm.runInContext('classifyTabs(tabs, DEFAULT_MODEL)', context),
+    /could not classify 2 of 4 tabs/i
+  );
+});
+
+test('classifyTabs rejects incomplete consolidation maps', async () => {
+  let fetchCalls = 0;
+  const context = loadScript('lib/ollama.js', {
+    fetch: async () => {
+      fetchCalls += 1;
+      if (fetchCalls <= 13) {
+        const batchSize = vm.runInContext('BATCH_SIZE', context);
+        return ollamaResponse([{
+          name: `Topic ${fetchCalls}`,
+          color: 'blue',
+          tab_ids: Array.from({ length: batchSize }, (_, index) => index + 1)
+        }]);
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          message: {
+            content: JSON.stringify({
+              CombinedA: [1],
+              CombinedB: [2],
+              CombinedC: [3]
+            })
+          }
+        })
+      };
+    }
+  });
+  const batchSize = vm.runInContext('BATCH_SIZE', context);
+  context.tabs = Array.from({ length: batchSize * 13 }, (_, index) => ({
+    title: `Tab ${index + 1}`,
+    url: `https://site${index + 1}.example/path`
+  }));
+
+  const result = await vm.runInContext('classifyTabs(tabs, DEFAULT_MODEL)', context);
+  assert.equal(fetchCalls, 14);
+  assert.equal(result.groups.some(group => group.name === 'Other'), false);
+  assert.equal(result.groups.length, 13);
+  assert.equal(
+    JSON.stringify([...result.groups.flatMap(group => group.tab_ids)].sort((a, b) => a - b)),
+    JSON.stringify(context.tabs.map((_, index) => index + 1))
+  );
+});
+
+test('classifyTabs keeps browser error pages out of model-generated topics', async () => {
+  let sentBody;
+  const context = loadScript('lib/ollama.js', {
+    fetch: async (_url, options) => {
+      sentBody = JSON.parse(options.body);
+      return ollamaResponse([{ name: 'Work', color: 'blue', tab_ids: [1, 2] }]);
+    }
+  });
+  context.tabs = [
+    { title: 'Privacy error', url: 'https://yandex.com/search' },
+    { title: '404 Not Found', url: 'https://example.com/missing' },
+    { title: 'GitHub Pull Requests', url: 'https://github.com/pulls' },
+    { title: 'Jenkins Build Dashboard', url: 'https://jenkins.io/builds' }
+  ];
+
+  const result = await vm.runInContext('classifyTabs(tabs, DEFAULT_MODEL)', context);
+  const errors = result.groups.find(group => group.name === 'Errors');
+  const work = result.groups.find(group => group.name === 'Work');
+  assert.equal(JSON.stringify(errors.tab_ids), JSON.stringify([1, 2]));
+  assert.equal(JSON.stringify(work.tab_ids), JSON.stringify([3, 4]));
+  assert.match(sentBody.messages[1].content, /Group these 2 tabs/);
+  assert.doesNotMatch(sentBody.messages[1].content, /Privacy error|404 Not Found/);
+});
+
+test('exact partition validators reject duplicate and out-of-range IDs', () => {
+  const context = loadScript('lib/ollama.js', { fetch: async () => {} });
+
+  assert.equal(vm.runInContext(`normalizeExactGroups([
+    { name: 'A', color: 'blue', tab_ids: [1, 2] },
+    { name: 'B', color: 'green', tab_ids: [2, 3] }
+  ], 3).valid`, context), false);
+  assert.equal(vm.runInContext(`normalizeExactGroups([
+    { name: 'A', color: 'blue', tab_ids: [1, 2, 4] },
+    { name: 'B', color: 'green', tab_ids: [3] }
+  ], 3).valid`, context), false);
+  context.sourceGroups = Array.from({ length: 13 }, (_, index) => ({
+    name: `Source ${index + 1}`,
+    color: 'blue',
+    tab_ids: [index + 1]
+  }));
+  assert.equal(vm.runInContext(`isExactMergePartition({
+    A: [1, 2], B: [3, 4], C: [5, 6], D: [7, 8], E: [9, 10], F: [10, 11, 12, 13]
+  }, sourceGroups)`, context), false);
+  assert.equal(vm.runInContext(`isExactMergePartition({
+    A: [1, 2], B: [3, 4], C: [5, 6], D: [7, 8], E: [9, 10], F: [11, 12, 14]
+  }, sourceGroups)`, context), false);
+  assert.equal(vm.runInContext(`normalizeExactGroups([
+    { name: 'Other', color: 'grey', tab_ids: [1, 2, 3] }
+  ], 3).valid`, context), false);
+  assert.equal(vm.runInContext(`normalizeExactGroups([
+    { name: 'Other Tabs', color: 'grey', tab_ids: [1, 2, 3] }
+  ], 3).valid`, context), false);
+  assert.equal(vm.runInContext(`normalizeExactGroups([
+    { name: 'General Web', color: 'grey', tab_ids: [1, 2, 3] }
+  ], 3).valid`, context), false);
+  assert.equal(vm.runInContext(`isExactMergePartition({
+    Other: [1, 2, 3], B: [4, 5], C: [6, 7], D: [8, 9], E: [10, 11], F: [12, 13]
+  }, sourceGroups)`, context), false);
+});
+
+test('classifyTabs caps same-name groups across batches', async () => {
+  const context = loadScript('lib/ollama.js', {
+    fetch: async () => ollamaResponse([{
+      name: 'Research',
+      color: 'blue',
+      tab_ids: Array.from({ length: 15 }, (_, index) => index + 1)
+    }])
+  });
+  context.tabs = Array.from({ length: 30 }, (_, index) => ({
+    title: `Research ${index + 1}`,
+    url: `https://research${index + 1}.example/path`
+  }));
+
+  const result = await vm.runInContext('classifyTabs(tabs, DEFAULT_MODEL)', context);
+  assert.equal(result.groups.length, 2);
+  assert.equal(Math.max(...result.groups.map(group => group.tab_ids.length)), 15);
+  assert.equal(result.groups.some(group => group.name === 'Other'), false);
+});
+
+test('handleTidy rolls back and reports group application failures', async () => {
+  let groupCalls = 0;
+  let rolledBack = [];
+  const context = loadScript('background.js', {
+    DEFAULT_MODEL: 'qwen3.5:4b',
+    checkOllamaReady: async () => ({ ok: true }),
+    classifyTabs: async () => ({
+      groups: [
+        { name: 'One', color: 'blue', tab_ids: [1] },
+        { name: 'Two', color: 'green', tab_ids: [2] }
+      ]
+    }),
+    clearInterval,
+    importScripts: () => {},
+    setInterval,
+    setTimeout,
+    chrome: {
+      action: {
+        onClicked: { addListener: () => {} },
+        setBadgeBackgroundColor: () => {},
+        setBadgeText: () => {},
+        setIcon: () => {},
+        setTitle: () => {}
+      },
+      tabGroups: {
+        query: async () => [],
+        update: async groupId => ({ id: groupId, title: 'ok', color: 'blue', collapsed: false })
+      },
+      tabs: {
+        group: async () => {
+          groupCalls += 1;
+          if (groupCalls === 2) throw new Error('group failed');
+          return 10;
+        },
+        move: async () => {},
+        query: async () => [
+          { id: 101, groupId: -1, url: 'https://one.example', title: 'One' },
+          { id: 102, groupId: -1, url: 'https://two.example', title: 'Two' }
+        ],
+        ungroup: async tabIds => { rolledBack = [...tabIds]; }
+      },
+      windows: {
+        getAll: async () => [{ id: 1, focused: true, incognito: false }]
+      }
+    }
+  });
+
+  const result = await vm.runInContext('handleTidy()', context);
+  assert.match(result.error, /Failed to apply group "Two": group failed/);
+  assert.equal(JSON.stringify(rolledBack), JSON.stringify([101]));
+});
+
+test('classifyTabs chunks large deterministic error groups', async () => {
+  let fetchCalls = 0;
+  const context = loadScript('lib/ollama.js', {
+    fetch: async () => { fetchCalls += 1; }
+  });
+  context.tabs = Array.from({ length: 16 }, (_, index) => ({
+    title: `Privacy error ${index + 1}`,
+    url: `https://error${index + 1}.example/`
+  }));
+
+  const result = await vm.runInContext('classifyTabs(tabs, DEFAULT_MODEL)', context);
+  assert.equal(fetchCalls, 0);
+  assert.equal(JSON.stringify(result.groups.map(group => group.name)), JSON.stringify(['Errors', 'Errors 2']));
+  assert.equal(JSON.stringify(result.groups.map(group => group.tab_ids.length)), JSON.stringify([15, 1]));
+});
