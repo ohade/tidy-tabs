@@ -6,6 +6,26 @@ const FRAME_COUNT = 6;
 let isRunning = false;
 let animTimer = null;
 
+async function publishReport(report) {
+  const lastTidyReport = {
+    status: report.status || 'error',
+    message: report.message || '',
+    groups: report.groups || [],
+    warnings: report.warnings || [],
+    timestamp: new Date().toISOString()
+  };
+  await chrome.storage.local.set({ lastTidyReport });
+  await chrome.tabs.create({ url: chrome.runtime.getURL('report.html') });
+}
+
+async function tryPublishReport(report) {
+  try {
+    await publishReport(report);
+  } catch (err) {
+    console.error('[tidy] Could not open report:', err);
+  }
+}
+
 // Click the toolbar icon → run tidy directly (no popup)
 chrome.action.onClicked.addListener(async (tab) => {
   if (isRunning) return;
@@ -19,11 +39,23 @@ chrome.action.onClicked.addListener(async (tab) => {
       chrome.action.setBadgeText({ text: '!' });
       chrome.action.setBadgeBackgroundColor({ color: '#e04040' });
       chrome.action.setTitle({ title: `Tidy error: ${result.error}` });
+      await tryPublishReport({
+        status: 'error',
+        message: result.error,
+        groups: result.groups,
+        warnings: result.warnings
+      });
     } else {
       const count = result.groups.length;
       chrome.action.setBadgeText({ text: String(count) });
       chrome.action.setBadgeBackgroundColor({ color: '#40b040' });
       chrome.action.setTitle({ title: `Tidied into ${count} groups` });
+      await tryPublishReport({
+        status: result.warnings?.length ? 'warning' : 'success',
+        message: `Tidied ${result.groups.reduce((sum, group) => sum + group.count, 0)} tabs into ${count} groups.`,
+        groups: result.groups,
+        warnings: result.warnings
+      });
       // Clear badge after 5s
       setTimeout(() => {
         chrome.action.setBadgeText({ text: '' });
@@ -35,6 +67,7 @@ chrome.action.onClicked.addListener(async (tab) => {
     chrome.action.setBadgeText({ text: '!' });
     chrome.action.setBadgeBackgroundColor({ color: '#e04040' });
     chrome.action.setTitle({ title: `Error: ${err.message}` });
+    await tryPublishReport({ status: 'error', message: err.message });
   } finally {
     stopIconAnimation();
     isRunning = false;
@@ -112,33 +145,57 @@ async function handleTidy() {
 
     if (tabIds.length === 0) continue;
 
+    const color = CHROME_COLORS.includes(group.color) ? group.color : 'grey';
+    let pendingGroup = null;
     try {
       const groupId = await chrome.tabs.group({ tabIds, createProperties: { windowId: targetWindow.id } });
       appliedTabIds.push(...tabIds);
-      const color = CHROME_COLORS.includes(group.color) ? group.color : 'grey';
+      pendingGroup = { name: group.name, color, count: tabIds.length, groupId };
       console.log(`[tidy] Created groupId=${groupId}, setting title="${group.name}" color="${color}"`);
       const updated = await chrome.tabGroups.update(groupId, { title: group.name, color });
       console.log(`[tidy] After update: id=${updated.id} title="${updated.title}" color="${updated.color}" collapsed=${updated.collapsed}`);
-      results.push({ name: group.name, color, count: tabIds.length, groupId });
+      results.push(pendingGroup);
+      pendingGroup = null;
     } catch (err) {
       console.error(`[tidy] Group "${group.name}" failed:`, err);
+      let rollbackWarning = '';
+      let rollbackFailed = false;
       if (appliedTabIds.length > 0) {
         try {
           await chrome.tabs.ungroup(appliedTabIds);
+          rollbackWarning = `Rolled back ${appliedTabIds.length} tab${appliedTabIds.length === 1 ? '' : 's'} after the application failure.`;
         } catch (rollbackErr) {
           console.error('[tidy] Rollback failed:', rollbackErr);
+          rollbackFailed = true;
+          rollbackWarning = `Rollback also failed: ${rollbackErr.message}`;
         }
       }
-      return { error: `Failed to apply group "${group.name}": ${err.message}` };
+      const uncertainGroups = rollbackFailed
+        ? [
+            ...results,
+            ...(pendingGroup ? [{ ...pendingGroup, name: `${pendingGroup.name} (state uncertain)` }] : [])
+          ]
+        : [];
+      return {
+        error: `Failed to apply group "${group.name}": ${err.message}`,
+        groups: uncertainGroups,
+        warnings: [...(classification.warnings || []), rollbackWarning].filter(Boolean)
+      };
     }
   }
 
   // Collapse all groups
   const allGroupsNow = await chrome.tabGroups.query({ windowId: targetWindow.id });
   for (const g of allGroupsNow) {
-    await chrome.tabGroups.update(g.id, { collapsed: true });
+    try {
+      await chrome.tabGroups.update(g.id, { collapsed: true });
+    } catch (err) {
+      console.warn(`[tidy] Could not collapse group ${g.id}:`, err);
+      classification.warnings = classification.warnings || [];
+      classification.warnings.push(`Group "${g.title || g.id}" was created but could not be collapsed: ${err.message}`);
+    }
   }
 
   console.log('[tidy] Done:', results.length, 'groups');
-  return { success: true, groups: results };
+  return { success: true, groups: results, warnings: classification.warnings || [] };
 }

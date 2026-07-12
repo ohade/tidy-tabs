@@ -140,7 +140,7 @@ test('classifyTabs retries an incomplete batch instead of creating Other', async
   );
 });
 
-test('classifyTabs rejects repeatedly incomplete batch output', async () => {
+test('classifyTabs repairs repeatedly incomplete batch output with bounded review groups', async () => {
   const context = loadScript('lib/ollama.js', {
     fetch: async () => ollamaResponse([{ name: 'Work', color: 'blue', tab_ids: [1, 2] }])
   });
@@ -149,10 +149,48 @@ test('classifyTabs rejects repeatedly incomplete batch output', async () => {
     url: `https://site${index + 1}.example/path`
   }));
 
-  await assert.rejects(
-    vm.runInContext('classifyTabs(tabs, DEFAULT_MODEL)', context),
-    /could not classify 2 of 4 tabs/i
-  );
+  const result = await vm.runInContext('classifyTabs(tabs, DEFAULT_MODEL)', context);
+  assert.equal(JSON.stringify(result.groups.flatMap(group => group.tab_ids).sort((a, b) => a - b)), JSON.stringify([1, 2, 3, 4]));
+  assert.equal(result.groups.some(group => group.name === 'Needs Review'), true);
+  assert.equal(result.warnings.length, 1);
+  assert.match(result.warnings[0], /2 tabs could not be classified reliably/i);
+});
+
+test('classifyTabs repairs repeated vague catch-all names', async () => {
+  const context = loadScript('lib/ollama.js', {
+    fetch: async () => ollamaResponse([{
+      name: 'Other Tabs',
+      color: 'grey',
+      tab_ids: [1, 2, 3, 4]
+    }])
+  });
+  context.tabs = Array.from({ length: 4 }, (_, index) => ({
+    title: `Tab ${index + 1}`,
+    url: `https://site${index + 1}.example/path`
+  }));
+
+  const result = await vm.runInContext('classifyTabs(tabs, DEFAULT_MODEL)', context);
+  assert.equal(JSON.stringify(result.groups.map(group => group.name)), JSON.stringify(['Needs Review']));
+  assert.equal(JSON.stringify(result.groups[0].tab_ids), JSON.stringify([1, 2, 3, 4]));
+  assert.equal(result.warnings.length, 1);
+});
+
+test('classifyTabs repairs repeated empty-name groups without losing IDs', async () => {
+  const context = loadScript('lib/ollama.js', {
+    fetch: async () => ollamaResponse([{
+      name: '',
+      color: 'grey',
+      tab_ids: [1, 2, 3, 4]
+    }])
+  });
+  context.tabs = Array.from({ length: 4 }, (_, index) => ({
+    title: `Tab ${index + 1}`,
+    url: `https://site${index + 1}.example/path`
+  }));
+
+  const result = await vm.runInContext('classifyTabs(tabs, DEFAULT_MODEL)', context);
+  assert.equal(JSON.stringify(result.groups.map(group => group.name)), JSON.stringify(['Needs Review']));
+  assert.equal(JSON.stringify(result.groups[0].tab_ids), JSON.stringify([1, 2, 3, 4]));
 });
 
 test('classifyTabs rejects incomplete consolidation maps', async () => {
@@ -327,6 +365,8 @@ test('handleTidy rolls back and reports group application failures', async () =>
   const result = await vm.runInContext('handleTidy()', context);
   assert.match(result.error, /Failed to apply group "Two": group failed/);
   assert.equal(JSON.stringify(rolledBack), JSON.stringify([101]));
+  assert.equal(result.groups.length, 0);
+  assert.match(result.warnings[0], /Rolled back 1 tab/);
 });
 
 test('classifyTabs chunks large deterministic error groups', async () => {
@@ -343,4 +383,158 @@ test('classifyTabs chunks large deterministic error groups', async () => {
   assert.equal(fetchCalls, 0);
   assert.equal(JSON.stringify(result.groups.map(group => group.name)), JSON.stringify(['Errors', 'Errors 2']));
   assert.equal(JSON.stringify(result.groups.map(group => group.tab_ids.length)), JSON.stringify([15, 1]));
+});
+
+test('publishReport persists details and opens a visible report tab', async () => {
+  let storedReport;
+  let openedUrl;
+  const context = loadScript('background.js', {
+    clearInterval,
+    importScripts: () => {},
+    setInterval,
+    setTimeout,
+    chrome: {
+      action: {
+        onClicked: { addListener: () => {} },
+        setBadgeBackgroundColor: () => {},
+        setBadgeText: () => {},
+        setIcon: () => {},
+        setTitle: () => {}
+      },
+      runtime: { getURL: path => `chrome-extension://tidy/${path}` },
+      storage: { local: { set: async value => { storedReport = value.lastTidyReport; } } },
+      tabs: { create: async ({ url }) => { openedUrl = url; } }
+    }
+  });
+
+  context.report = {
+    status: 'error',
+    message: 'Could not classify tabs',
+    groups: [],
+    warnings: ['Model output needed repair']
+  };
+  await vm.runInContext('publishReport(report)', context);
+
+  assert.equal(storedReport.status, 'error');
+  assert.equal(storedReport.message, 'Could not classify tabs');
+  assert.match(storedReport.timestamp, /^\d{4}-\d{2}-\d{2}T/);
+  assert.equal(openedUrl, 'chrome-extension://tidy/report.html');
+});
+
+test('handleTidy reports collapse failures as warnings instead of failing the run', async () => {
+  let updateCalls = 0;
+  const context = loadScript('background.js', {
+    DEFAULT_MODEL: 'qwen3.5:4b',
+    checkOllamaReady: async () => ({ ok: true }),
+    classifyTabs: async () => ({
+      groups: [{ name: 'Work', color: 'blue', tab_ids: [1, 2] }],
+      warnings: []
+    }),
+    clearInterval,
+    importScripts: () => {},
+    setInterval,
+    setTimeout,
+    chrome: {
+      action: { onClicked: { addListener: () => {} }, setIcon: () => {} },
+      tabGroups: {
+        query: async () => [{ id: 10, title: 'Work' }],
+        update: async () => {
+          updateCalls += 1;
+          if (updateCalls === 2) throw new Error('collapse failed');
+          return { id: 10, title: 'Work', color: 'blue', collapsed: false };
+        }
+      },
+      tabs: {
+        group: async () => 10,
+        move: async () => {},
+        query: async () => [
+          { id: 101, groupId: -1, url: 'https://one.example', title: 'One' },
+          { id: 102, groupId: -1, url: 'https://two.example', title: 'Two' }
+        ]
+      },
+      windows: { getAll: async () => [{ id: 1, focused: true, incognito: false }] }
+    }
+  });
+
+  const result = await vm.runInContext('handleTidy()', context);
+  assert.equal(result.success, true);
+  assert.equal(result.groups.length, 1);
+  assert.match(result.warnings[0], /could not be collapsed: collapse failed/);
+});
+
+test('red-badge error paths persist and open a visible report', async () => {
+  let clickListener;
+  let badgeText;
+  let storedReport;
+  let reportOpened = false;
+  loadScript('background.js', {
+    clearInterval: () => {},
+    importScripts: () => {},
+    setInterval: () => 1,
+    setTimeout: () => {},
+    chrome: {
+      action: {
+        onClicked: { addListener: listener => { clickListener = listener; } },
+        setBadgeBackgroundColor: () => {},
+        setBadgeText: ({ text }) => { badgeText = text; },
+        setIcon: () => {},
+        setTitle: () => {}
+      },
+      runtime: { getURL: path => `chrome-extension://tidy/${path}` },
+      storage: { local: { set: async value => { storedReport = value.lastTidyReport; } } },
+      tabs: { create: async () => { reportOpened = true; } },
+      windows: { getAll: async () => [] }
+    }
+  });
+
+  await clickListener({});
+  assert.equal(badgeText, '!');
+  assert.equal(storedReport.status, 'error');
+  assert.equal(storedReport.message, 'No browser window found');
+  assert.equal(reportOpened, true);
+});
+
+test('handleTidy reports groups that may remain when rollback fails', async () => {
+  let groupCalls = 0;
+  const context = loadScript('background.js', {
+    DEFAULT_MODEL: 'qwen3.5:4b',
+    checkOllamaReady: async () => ({ ok: true }),
+    classifyTabs: async () => ({
+      groups: [
+        { name: 'One', color: 'blue', tab_ids: [1] },
+        { name: 'Two', color: 'green', tab_ids: [2] }
+      ],
+      warnings: []
+    }),
+    clearInterval,
+    importScripts: () => {},
+    setInterval,
+    setTimeout,
+    chrome: {
+      action: { onClicked: { addListener: () => {} }, setIcon: () => {} },
+      tabGroups: {
+        query: async () => [],
+        update: async groupId => ({ id: groupId, title: 'ok', color: 'blue', collapsed: false })
+      },
+      tabs: {
+        group: async () => {
+          groupCalls += 1;
+          if (groupCalls === 2) throw new Error('group failed');
+          return 10;
+        },
+        move: async () => {},
+        query: async () => [
+          { id: 101, groupId: -1, url: 'https://one.example', title: 'One' },
+          { id: 102, groupId: -1, url: 'https://two.example', title: 'Two' }
+        ],
+        ungroup: async () => { throw new Error('rollback failed'); }
+      },
+      windows: { getAll: async () => [{ id: 1, focused: true, incognito: false }] }
+    }
+  });
+
+  const result = await vm.runInContext('handleTidy()', context);
+  assert.equal(result.groups.length, 1);
+  assert.equal(result.groups[0].name, 'One');
+  assert.match(result.warnings[0], /Rollback also failed: rollback failed/);
 });

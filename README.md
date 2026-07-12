@@ -57,6 +57,7 @@ Click the broom icon. That's it.
 - Broom animates while working (~8-10s per batch of 15 tabs)
 - Green badge with group count when done
 - Red `!` badge on error (hover for details)
+- A visible report tab opens after every run with status, warnings, and group counts
 - Existing tab groups are preserved
 
 ## Requirements
@@ -71,6 +72,7 @@ Click the broom icon. That's it.
 tidy-tabs/
 ├── manifest.json      # MV3 manifest — tabs, tabGroups, storage permissions
 ├── background.js      # Service worker — icon click handler, tab merging, grouping
+├── report.{html,css,js} # Visible result/error report opened after every run
 ├── lib/
 │   └── ollama.js      # Ollama API client — batching, structured output, JSON rescue
 └── icons/
@@ -92,7 +94,7 @@ tidy-tabs/
 
 ## Known Issues
 
-- **JSON parse failures**: Ollama occasionally produces invalid JSON despite `format` schema. Rescued groups must still cover every tab exactly once; otherwise the extension retries and then fails clearly.
+- **JSON parse failures**: Ollama occasionally produces invalid JSON despite `format` schema. Rescued groups must still cover every tab exactly once; otherwise the extension retries and puts unresolved tabs into bounded `Needs Review` groups with a visible warning.
 - **Semantic grouping**: Topic choices are model-generated, but vague catch-all names and groups larger than 15 tabs are rejected. Recognizable browser error pages are separated into `Errors`.
 - **Chrome 145**: Collapsed group titles don't render. Update to Chrome 146+.
 

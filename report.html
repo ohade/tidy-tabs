@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tidy Tabs Report</title>
+  <link rel="stylesheet" href="report.css">
+</head>
+<body>
+  <main class="report-shell">
+    <header>
+      <div>
+        <p class="eyebrow">Tidy Tabs</p>
+        <h1>Run report</h1>
+      </div>
+      <span id="status" class="status">Loading</span>
+    </header>
+
+    <section class="summary-card">
+      <p id="message">Loading the latest run…</p>
+      <p id="timestamp" class="muted"></p>
+      <p id="totals" class="totals"></p>
+    </section>
+
+    <section id="warnings-section" hidden>
+      <h2>Warnings</h2>
+      <ul id="warnings" class="warnings"></ul>
+    </section>
+
+    <section>
+      <h2>Groups</h2>
+      <div id="groups" class="groups"></div>
+    </section>
+
+    <button id="close" type="button">Close report</button>
+  </main>
+  <script src="report.js"></script>
+</body>
+</html>
