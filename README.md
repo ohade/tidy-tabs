@@ -10,7 +10,7 @@ Click the broom icon → all non-incognito windows merge into one → tabs are c
 Click broom icon
   → Merge all non-incognito windows into one
   → Collect ungrouped tab titles + URLs
-  → Send to local Ollama (Qwen 3.5-9B) in batches of 15
+  → Send to local Ollama (Qwen 3.5-4B) in batches of 15
   → Ollama returns JSON: { groups: [{ name, color, tab_ids }] }
   → If >10 groups, consolidation pass merges similar groups into 5-8
   → chrome.tabs.group() + chrome.tabGroups.update() creates named, colored groups
@@ -31,10 +31,10 @@ brew services start ollama
 ### 2. Pull the model
 
 ```bash
-ollama pull qwen3.5:9b
+ollama pull qwen3.5:4b
 ```
 
-Qwen 3.5-9B: best structured JSON output (IFBench 76.5), 6.6GB, ~40-65 tok/sec on Apple Silicon.
+Qwen 3.5-4B: a compact 3.4GB model with enough instruction-following quality for schema-constrained tab classification.
 
 ### 3. Allow Chrome extension access
 
@@ -63,7 +63,7 @@ Click the broom icon. That's it.
 
 - Chrome 146+ (Chrome 145 has a bug where collapsed group titles don't render)
 - macOS with Ollama running locally (tested on M4 Pro, 48GB RAM)
-- Qwen 3.5-9B model pulled
+- Qwen 3.5-4B model pulled
 
 ## Architecture
 
@@ -82,7 +82,7 @@ tidy-tabs/
 
 | Decision | Choice | Why |
 |----------|--------|-----|
-| Model | Qwen 3.5-9B | Best instruction following + structured output, fits in 48GB |
+| Model | Qwen 3.5-4B | Good structured output and group naming at roughly half the 9B footprint |
 | `think: false` | Disabled thinking | 5+ min → 6s response time |
 | `num_predict: 4096` | High token limit | Prevents JSON truncation on large batches |
 | Batch size 15 | Fixed batches | Balance between quality and speed |

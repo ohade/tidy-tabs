@@ -71,6 +71,10 @@ async function handleTidy() {
   const targetWindow = normalWindows.find(w => w.focused) || normalWindows[0];
   console.log('[tidy] Target window:', targetWindow.id, '| Total windows:', normalWindows.length);
 
+  // Validate the local backend before moving any tabs between windows.
+  const ollamaStatus = await checkOllamaReady(DEFAULT_MODEL);
+  if (!ollamaStatus.ok) return { error: ollamaStatus.error };
+
   // Move tabs from other windows into the target window
   for (const win of normalWindows) {
     if (win.id === targetWindow.id) continue;
@@ -92,10 +96,6 @@ async function handleTidy() {
   console.log('[tidy] Tabs to classify:', validTabs.length);
 
   if (validTabs.length < 2) return { error: 'Need at least 2 ungrouped tabs' };
-
-  // Check Ollama is running
-  const ollamaOk = await checkOllamaRunning();
-  if (!ollamaOk) return { error: 'Ollama not running' };
 
   // Classify
   console.log('[tidy] Classifying...');
