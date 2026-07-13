@@ -1,3 +1,34 @@
+function csvCell(value) {
+  let text = String(value ?? '');
+  if (/^[=+\-@]/.test(text)) text = `'${text}`;
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function buildUrlCsv(reportGroups) {
+  const rows = [['Group', 'Color', 'Title', 'URL']];
+  for (const group of Array.isArray(reportGroups) ? reportGroups : []) {
+    for (const tab of Array.isArray(group.tabs) ? group.tabs : []) {
+      rows.push([group.name, group.color, tab.title, tab.url]);
+    }
+  }
+  return `${rows.map(row => row.map(csvCell).join(',')).join('\r\n')}\r\n`;
+}
+
+function downloadUrlCsv(report) {
+  const csv = buildUrlCsv(report.groups);
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  const timestamp = new Date(report.timestamp || Date.now()).toISOString().replace(/[:.]/g, '-');
+  link.href = objectUrl;
+  link.download = `tidy-tabs-urls-${timestamp}.csv`;
+  link.hidden = true;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
   const { lastTidyReport: report } = await chrome.storage.local.get('lastTidyReport');
   const status = document.getElementById('status');
@@ -9,6 +40,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   const warnings = document.getElementById('warnings');
   const detailsSection = document.getElementById('details-section');
   const details = document.getElementById('details');
+  const download = document.getElementById('download');
+
+  document.getElementById('close').addEventListener('click', () => window.close());
 
   if (!report) {
     status.textContent = 'No report';
@@ -23,8 +57,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   timestamp.textContent = new Date(report.timestamp).toLocaleString();
 
   const reportGroups = Array.isArray(report.groups) ? report.groups : [];
+  const hasExportableTabs = reportGroups.some(group => Array.isArray(group.tabs) && group.tabs.length > 0);
   const tabCount = reportGroups.reduce((sum, group) => sum + (group.count || 0), 0);
   totals.textContent = `${reportGroups.length} groups • ${tabCount} tabs`;
+
+  if (hasExportableTabs) {
+    download.hidden = false;
+    download.addEventListener('click', () => downloadUrlCsv(report));
+  }
 
   if (report.warnings?.length) {
     warningsSection.hidden = false;
@@ -72,6 +112,4 @@ document.addEventListener('DOMContentLoaded', async () => {
       groups.appendChild(card);
     }
   }
-
-  document.getElementById('close').addEventListener('click', () => window.close());
 });

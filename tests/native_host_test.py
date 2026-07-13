@@ -151,8 +151,16 @@ class NativeHostTest(unittest.TestCase):
             for index in range(1, 62)
         ]
         categories = [
-            {"name": "Development", "color": "blue"},
-            {"name": "Reading", "color": "green"},
+            {
+                "name": "Development",
+                "description": "Implementation and code changes; excludes passive reading.",
+                "color": "blue",
+            },
+            {
+                "name": "Reading",
+                "description": "Passive reference material; excludes active implementation.",
+                "color": "green",
+            },
         ]
 
         plan_prompt = HOST.category_plan_prompt(tabs, strict_retry=True)
@@ -162,11 +170,17 @@ class NativeHostTest(unittest.TestCase):
             allowed_categories=categories,
         )
 
-        self.assertIn("Create 8-16 unique categories", plan_prompt)
+        self.assertIn("Create 8-12 unique categories", plan_prompt)
         self.assertIn("strict retry", plan_prompt)
+        self.assertIn("websites, tools, and page formats as evidence", plan_prompt)
+        self.assertIn("category boundaries mutually exclusive", plan_prompt)
+        self.assertIn("Give every category a short description", plan_prompt)
         self.assertIn("Use only the exact category names", classify_prompt)
-        self.assertIn("- Development (blue)", classify_prompt)
-        self.assertIn("- Reading (green)", classify_prompt)
+        self.assertIn(
+            "- Development (blue): Implementation and code changes; excludes passive reading.",
+            classify_prompt,
+        )
+        self.assertIn("underlying intents differ", classify_prompt)
 
     def test_plan_categories_uses_category_schema(self):
         completed = subprocess.CompletedProcess([], 0, stdout="", stderr="")
@@ -177,7 +191,7 @@ class NativeHostTest(unittest.TestCase):
             captured.update(kwargs)
             output_index = command.index("--output-last-message") + 1
             Path(command[output_index]).write_text(
-                '{"categories":[{"name":"Development","color":"blue"}]}',
+                '{"categories":[{"name":"Development","description":"Implementation work.","color":"blue"}]}',
                 encoding="utf-8",
             )
             return completed
@@ -194,6 +208,7 @@ class NativeHostTest(unittest.TestCase):
         schema_index = captured["command"].index("--output-schema") + 1
         self.assertTrue(result["ok"])
         self.assertEqual(result["categories"][0]["name"], "Development")
+        self.assertEqual(result["categories"][0]["description"], "Implementation work.")
         self.assertEqual(captured["command"][schema_index], str(HOST.CATEGORY_SCHEMA_PATH))
 
 

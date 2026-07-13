@@ -162,9 +162,10 @@ async function handleTidy() {
   const results = [];
   const appliedTabIds = [];
   for (const group of classification.groups) {
-    const tabIds = group.tab_ids
-      .map(id => validTabs[id - 1]?.id)
-      .filter(Boolean);
+    const groupedTabs = group.tab_ids
+      .map(id => validTabs[id - 1])
+      .filter(tab => tab && Number.isInteger(tab.id));
+    const tabIds = groupedTabs.map(tab => tab.id);
 
     if (tabIds.length === 0) continue;
 
@@ -173,7 +174,16 @@ async function handleTidy() {
     try {
       const groupId = await chrome.tabs.group({ tabIds, createProperties: { windowId: targetWindow.id } });
       appliedTabIds.push(...tabIds);
-      pendingGroup = { name: group.name, color, count: tabIds.length, groupId };
+      pendingGroup = {
+        name: group.name,
+        color,
+        count: tabIds.length,
+        groupId,
+        tabs: groupedTabs.map(tab => ({
+          title: tab.title || 'Untitled',
+          url: tab.url || ''
+        }))
+      };
       console.log(`[tidy] Created groupId=${groupId}, setting title="${group.name}" color="${color}"`);
       const updated = await chrome.tabGroups.update(groupId, { title: group.name, color });
       console.log(`[tidy] After update: id=${updated.id} title="${updated.title}" color="${updated.color}" collapsed=${updated.collapsed}`);

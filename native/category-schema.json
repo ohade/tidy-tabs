@@ -7,12 +7,13 @@
         "type": "object",
         "properties": {
           "name": { "type": "string" },
+          "description": { "type": "string" },
           "color": {
             "type": "string",
             "enum": ["grey", "blue", "red", "yellow", "green", "pink", "purple", "cyan", "orange"]
           }
         },
-        "required": ["name", "color"],
+        "required": ["name", "description", "color"],
         "additionalProperties": false
       }
     }

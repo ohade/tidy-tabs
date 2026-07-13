@@ -178,8 +178,8 @@ test('classifyTabsCodex plans and merges exact batches for large tab sets', asyn
             callback({
               ok: true,
               categories: [
-                { name: 'Development', color: 'blue' },
-                { name: 'Reading', color: 'green' }
+                { name: 'Development', description: 'Implementation and code changes.', color: 'blue' },
+                { name: 'Reading', description: 'Reference material unrelated to active implementation.', color: 'green' }
               ]
             });
             return;
@@ -214,8 +214,8 @@ test('classifyTabsCodex plans and merges exact batches for large tab sets', asyn
   assert.equal(requests[1].tabs.length, 50);
   assert.equal(requests[2].tabs.length, 11);
   assert.equal(JSON.stringify(requests[1].allowed_categories), JSON.stringify([
-    { name: 'Development', color: 'blue' },
-    { name: 'Reading', color: 'green' }
+    { name: 'Development', description: 'Implementation and code changes.', color: 'blue' },
+    { name: 'Reading', description: 'Reference material unrelated to active implementation.', color: 'green' }
   ]));
   assert.equal(JSON.stringify(result.groups.map(group => group.name)), JSON.stringify([
     'Development', 'Reading'
@@ -236,7 +236,10 @@ test('classifyTabsCodex reports invalid shared category plans', async () => {
         sendNativeMessage: (_host, message, callback) => {
           requests += 1;
           assert.equal(message.action, 'plan');
-          callback({ ok: true, categories: [{ name: 'Other', color: 'grey' }] });
+          callback({
+            ok: true,
+            categories: [{ name: 'Other', description: 'Everything else.', color: 'grey' }]
+          });
         }
       }
     }

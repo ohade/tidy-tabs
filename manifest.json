@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Tidy Tabs",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "One-click AI tab organization using Codex",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApe76lleK7LjGR0FavBzu0twGHRGyUdWpk3XhJdqN0KyrQ6c4XdZydnoldyzxavTUnuJLWVkRQWlgUy72WddsMaSMmD/buNQOZJMJ3QHGQmI/B2ba+hDuYyJrxQArcW5oyD4kgJL4+t8U8owGhgjkZYj+iFDGGreu7IAS40pmocNmujLp1UKU99ljhD3I2gFEUDXfrPSi/lZr+Ac0Z9W+nY9g/mdjrPgVz3a9kPk1ORZR75nuZp3swuC0cxrEVdhpbopLgEpF1FaLjziv0kctwWSZzIsxkyjTxH/oV8olXjh7722LJytRO7aYVt0G5aVGZMafLf0YCcoKQswzeDp+sQIDAQAB",
   "permissions": ["tabs", "tabGroups", "storage", "nativeMessaging"],

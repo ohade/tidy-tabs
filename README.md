@@ -17,7 +17,7 @@ Click broom icon
   -> Merge all non-incognito windows into one
   -> Clear previous eligible groups
   -> Create and collapse Chrome tab groups
-  -> Open a report with status, warnings, and group counts
+  -> Open a report with status, warnings, group counts, and a CSV export of grouped URLs
 ```
 
 Recognizable browser error pages are separated deterministically and are not sent to the model. Other tab titles and URLs are sent to OpenAI through the authenticated Codex CLI.
@@ -58,6 +58,7 @@ Click the broom icon.
 - A green badge shows the group count on success.
 - A red `!` badge indicates an error; the opened report contains the full error.
 - Invalid classifications include a privacy-safe, attempt-by-attempt explanation of omitted, duplicate, invented, oversized, vague, or malformed assignments.
+- Successful reports can download a CSV containing each tab's assigned group, color, title, and URL.
 - Existing eligible tab groups are replaced on every successful run, so clicking again re-tidies the browser.
 - If both classification attempts are invalid, the run stops before moving tabs or clearing groups.
 - The active provider is `ACTIVE_PROVIDER` in `background.js`.
@@ -83,7 +84,7 @@ tidy-tabs/
 
 ## Provider Choice
 
-Codex is active by default because the local 4B model produced inconsistent topics and oversized groups. The host uses `gpt-5.6-luna` with medium reasoning. Runs above 50 model-classified tabs first create a shared intent taxonomy, then assign batches of 50 only to those categories. Model-response groups stay capped at 15 tabs for assignment reliability, but final assignments are merged into one Chrome group per taxonomy category. Invalid plans or batches retry once, and Chrome is not mutated unless every batch passes exact-partition validation.
+Codex is active by default because the local 4B model produced inconsistent topics and oversized groups. The host uses `gpt-5.6-luna` with medium reasoning. Runs above 50 model-classified tabs first create a shared intent taxonomy with a short, mutually exclusive definition for every category, then assign batches of 50 against those definitions. The prompt prioritizes concrete projects and workstreams over generic website, tool, or page-type buckets. Model-response groups stay capped at 15 tabs for assignment reliability, but final assignments are merged into one Chrome group per taxonomy category. Invalid plans or batches retry once, and Chrome is not mutated unless every batch passes exact-partition validation.
 
 The Ollama implementation remains in `lib/ollama.js`. To restore it later, set `ACTIVE_PROVIDER` to `ollama`, reinstall the desired model, start Ollama, and reload the extension. The localhost host permission is deliberately retained for that reversible fallback.
 

@@ -163,6 +163,8 @@ test('handleTidy reclassifies and replaces existing groups after classification 
   assert.equal(events.indexOf('ungroup') < events.indexOf('group'), true);
   assert.equal(result.retidiedTabs, 2);
   assert.equal(result.groups.length, 2);
+  assert.equal(result.groups[0].tabs[0].title, 'Pull requests');
+  assert.equal(result.groups[0].tabs[0].url, 'https://github.com/acme/repo/pulls');
 });
 
 test('handleTidy preserves windows and groups when classification fails', async () => {
@@ -518,9 +520,14 @@ test('publishReport persists details and opens a visible report tab', async () =
   });
 
   context.report = {
-    status: 'error',
-    message: 'Could not classify tabs',
-    groups: [],
+    status: 'warning',
+    message: 'Tidied with a retry',
+    groups: [{
+      name: 'Code Review',
+      color: 'blue',
+      count: 1,
+      tabs: [{ title: 'Pull request', url: 'https://github.com/acme/repo/pull/1' }]
+    }],
     warnings: ['Model output needed repair'],
     details: [{
       title: 'Attempt 1',
@@ -530,8 +537,9 @@ test('publishReport persists details and opens a visible report tab', async () =
   };
   await vm.runInContext('publishReport(report)', context);
 
-  assert.equal(storedReport.status, 'error');
-  assert.equal(storedReport.message, 'Could not classify tabs');
+  assert.equal(storedReport.status, 'warning');
+  assert.equal(storedReport.message, 'Tidied with a retry');
+  assert.equal(storedReport.groups[0].tabs[0].url, 'https://github.com/acme/repo/pull/1');
   assert.equal(storedReport.details[0].title, 'Attempt 1');
   assert.equal(storedReport.details[0].reasons[0], '2 tab IDs were omitted.');
   assert.match(storedReport.timestamp, /^\d{4}-\d{2}-\d{2}T/);

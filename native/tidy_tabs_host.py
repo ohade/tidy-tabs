@@ -106,22 +106,30 @@ def classification_prompt(tabs, strict_retry=False, allowed_categories=None):
 This is a strict retry because the previous answer was rejected. Recount every input ID before answering and verify that the output is an exact partition.
 """ if strict_retry else ""
     category_instruction = """
-- Use only the exact category names and matching colors listed below. A category may appear in multiple groups when needed to keep every group at 15 tabs or fewer; repeat its exact name without adding a suffix or modifier.
+- Use only the exact category names and matching colors listed below. Use each intent description to resolve overlapping-looking names.
+- A category may appear in multiple groups when needed to keep every group at 15 tabs or fewer; repeat its exact name without adding a suffix or modifier.
 
 Allowed categories:
 %s
 """ % "\n".join(
-        "- %s (%s)" % (clean_text(category.get("name"), 80), category.get("color"))
+        "- %s (%s): %s" % (
+            clean_text(category.get("name"), 80),
+            category.get("color"),
+            clean_text(category.get("description"), 240),
+        )
         for category in (allowed_categories or [])
     ) if allowed_categories else ""
-    return """Group these browser tabs by the user's likely current intent.
+    return """Group these browser tabs by the user's likely current project, task, or decision.
 
 Return only the JSON required by the supplied schema. Rules:
 - Every tab ID must appear exactly once, with no duplicates or invented IDs.
-- Use specific task/topic names, usually 2-4 words. Infer intent from title, domain, and path.
+- Treat each title, domain, and URL path as evidence of why the user opened the tab. Do not group primarily by website, tool, or page format.
+- Prefer a concrete named project, product, investigation, or workstream when the evidence supports one. Pull requests, dashboards, documentation, searches, and tickets for the same workstream belong together.
+- Use specific intent names, usually 2-4 words. Avoid generic activity or tool buckets such as Developer Tools, Data Querying, Dashboard Review, AI Research, or Platform Access when a concrete workstream can be inferred.
+- Make groups mutually exclusive. If two labels could accept the same tab, choose the narrower intent and do not invent a parallel near-duplicate.
 - Never put more than 15 tabs in one group. These %(tab_count)d tabs therefore require at least %(minimum_group_count)d %(minimum_group_label)s.
 - Prefer 6-12 tabs per group when they share a coherent intent; use smaller groups for genuinely distinct tasks.
-- Keep searches, tutorials, product pages, social/video pages, news stories, and reference/archive pages separate when their intents differ.
+- Separate searches, tutorials, product pages, social/video pages, news stories, and reference/archive pages only when their underlying intents differ. A shared page type alone is not an intent.
 - Keep different languages together only when the underlying task/topic matches.
 - Never use Other, Miscellaneous, General, Uncategorized, Various, News & Media, or Needs Review.
 - Colors must be one of grey, blue, red, yellow, green, pink, purple, cyan, orange.
@@ -142,18 +150,21 @@ Tabs:
 
 
 def category_plan_prompt(tabs, strict_retry=False):
-    minimum_categories = max(8, min(12, (len(tabs) + 19) // 20))
-    maximum_categories = min(20, minimum_categories + 8)
+    minimum_categories = max(8, min(12, (len(tabs) + 24) // 25))
+    maximum_categories = min(16, minimum_categories + 4)
     retry_instruction = """
 This is a strict retry because the previous category plan was invalid. Return unique, specific category names within the requested range.
 """ if strict_retry else ""
-    return """Design a reusable intent taxonomy for these browser tabs.
+    return """Design a reusable, mutually exclusive intent taxonomy for these browser tabs.
 
 Return only the JSON required by the supplied schema. Rules:
-- Create %(minimum_categories)d-%(maximum_categories)d unique categories that collectively fit the tabs' likely current intents.
-- Use specific task/topic names, usually 2-4 words. Infer intent from title, domain, and path.
-- Categories will be reused to classify smaller batches, so keep related work under stable names without collapsing genuinely different intents.
-- Keep searches, tutorials, product pages, social/video pages, news stories, and reference/archive pages separate when their intents differ.
+- Create %(minimum_categories)d-%(maximum_categories)d unique categories that collectively fit the tabs' likely current projects, tasks, and decisions. Use the fewest categories in that range that preserve genuinely different intents.
+- First infer recurring named projects, products, investigations, and workstreams from titles, domains, and paths. Treat websites, tools, and page formats as evidence, not as the organizing principle.
+- Prefer a concrete workstream such as Customer Portal Migration or Release Pipeline Reliability over a generic bucket such as Developer Tools, Data Querying, Dashboard Review, AI Research, or Platform Access when the evidence supports it.
+- Pull requests, dashboards, documentation, searches, and tickets for the same workstream should share one category. Separate page types only when their underlying intents differ.
+- Make category boundaries mutually exclusive. Merge categories that overlap, differ only by tool/page type, or would compete for the same tabs.
+- Give every category a short description that says what belongs there and distinguishes it from its nearest neighboring category. Later batches will rely on these descriptions.
+- Use specific category names, usually 2-4 words. Do not create a category for a single isolated page when a specific existing workstream reasonably fits it.
 - Never use Other, Miscellaneous, General, Uncategorized, Various, News & Media, or Needs Review.
 - Colors must be one of grey, blue, red, yellow, green, pink, purple, cyan, orange.
 - Do not assign tab IDs, inspect files, run commands, browse the web, or explain the answer.
@@ -244,6 +255,7 @@ def classify(message):
         if any(
             not isinstance(category, dict)
             or not clean_text(category.get("name"), 80)
+            or not clean_text(category.get("description"), 240)
             or category.get("color") not in ("grey", "blue", "red", "yellow", "green", "pink", "purple", "cyan", "orange")
             for category in allowed_categories
         ):
