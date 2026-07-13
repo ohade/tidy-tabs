@@ -13,7 +13,7 @@ Click broom icon
   -> For 50 tabs or fewer, send one schema-constrained classification request
   -> For larger runs, create one shared taxonomy and classify batches of 50 against it
   -> Retry any invalid plan or batch once
-  -> Validate that every tab appears exactly once and no group exceeds 15 tabs
+  -> Validate that every tab appears exactly once; keep model-response groups at 15 tabs or fewer
   -> Merge all non-incognito windows into one
   -> Clear previous eligible groups
   -> Create and collapse Chrome tab groups
@@ -83,7 +83,7 @@ tidy-tabs/
 
 ## Provider Choice
 
-Codex is active by default because the local 4B model produced inconsistent topics and oversized groups. The host uses `gpt-5.6-luna` with medium reasoning. Runs above 50 model-classified tabs first create a shared intent taxonomy, then assign batches of 50 only to those categories. Final groups are merged deterministically and split at 15 tabs. Invalid plans or batches retry once, and Chrome is not mutated unless every batch passes exact-partition validation.
+Codex is active by default because the local 4B model produced inconsistent topics and oversized groups. The host uses `gpt-5.6-luna` with medium reasoning. Runs above 50 model-classified tabs first create a shared intent taxonomy, then assign batches of 50 only to those categories. Model-response groups stay capped at 15 tabs for assignment reliability, but final assignments are merged into one Chrome group per taxonomy category. Invalid plans or batches retry once, and Chrome is not mutated unless every batch passes exact-partition validation.
 
 The Ollama implementation remains in `lib/ollama.js`. To restore it later, set `ACTIVE_PROVIDER` to `ollama`, reinstall the desired model, start Ollama, and reload the extension. The localhost host permission is deliberately retained for that reversible fallback.
 

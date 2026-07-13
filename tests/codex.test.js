@@ -218,9 +218,9 @@ test('classifyTabsCodex plans and merges exact batches for large tab sets', asyn
     { name: 'Reading', color: 'green' }
   ]));
   assert.equal(JSON.stringify(result.groups.map(group => group.name)), JSON.stringify([
-    'Development', 'Development 2', 'Development 3', 'Reading', 'Reading 2'
+    'Development', 'Reading'
   ]));
-  assert.equal(Math.max(...result.groups.map(group => group.tab_ids.length)), 15);
+  assert.equal(JSON.stringify(result.groups.map(group => group.tab_ids.length)), JSON.stringify([36, 25]));
   assert.equal(
     JSON.stringify(result.groups.flatMap(group => group.tab_ids).sort((a, b) => a - b)),
     JSON.stringify(Array.from({ length: 61 }, (_, index) => index + 1))
