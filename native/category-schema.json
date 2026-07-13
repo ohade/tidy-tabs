@@ -1,0 +1,22 @@
+{
+  "type": "object",
+  "properties": {
+    "categories": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "color": {
+            "type": "string",
+            "enum": ["grey", "blue", "red", "yellow", "green", "pink", "purple", "cyan", "orange"]
+          }
+        },
+        "required": ["name", "color"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["categories"],
+  "additionalProperties": false
+}

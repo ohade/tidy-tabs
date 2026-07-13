@@ -165,3 +165,93 @@ test('Codex diagnostics identify each exact-partition rule failure', () => {
   assert.equal(result.reasons.some(reason => /had no name/.test(reason)), true);
   assert.equal(result.reasons.some(reason => /disallowed vague name/.test(reason)), true);
 });
+
+test('classifyTabsCodex plans and merges exact batches for large tab sets', async () => {
+  const requests = [];
+  const context = loadCodex({
+    chrome: {
+      runtime: {
+        lastError: null,
+        sendNativeMessage: (_host, message, callback) => {
+          requests.push(message);
+          if (message.action === 'plan') {
+            callback({
+              ok: true,
+              categories: [
+                { name: 'Development', color: 'blue' },
+                { name: 'Reading', color: 'green' }
+              ]
+            });
+            return;
+          }
+          if (message.tabs.length === 50) {
+            callback({
+              ok: true,
+              groups: [
+                { name: 'Development', color: 'blue', tab_ids: Array.from({ length: 15 }, (_, index) => index + 1) },
+                { name: 'Development', color: 'blue', tab_ids: Array.from({ length: 10 }, (_, index) => index + 16) },
+                { name: 'Reading', color: 'green', tab_ids: Array.from({ length: 15 }, (_, index) => index + 26) },
+                { name: 'Reading', color: 'green', tab_ids: Array.from({ length: 10 }, (_, index) => index + 41) }
+              ]
+            });
+            return;
+          }
+          callback({
+            ok: true,
+            groups: [{ name: 'Development', color: 'blue', tab_ids: Array.from({ length: 11 }, (_, index) => index + 1) }]
+          });
+        }
+      }
+    }
+  });
+  context.tabs = Array.from({ length: 61 }, (_, index) => ({
+    title: `Tab ${index + 1}`,
+    url: `https://site${index + 1}.example/`
+  }));
+
+  const result = await vm.runInContext('classifyTabsCodex(tabs)', context);
+  assert.equal(JSON.stringify(requests.map(request => request.action)), JSON.stringify(['plan', 'classify', 'classify']));
+  assert.equal(requests[1].tabs.length, 50);
+  assert.equal(requests[2].tabs.length, 11);
+  assert.equal(JSON.stringify(requests[1].allowed_categories), JSON.stringify([
+    { name: 'Development', color: 'blue' },
+    { name: 'Reading', color: 'green' }
+  ]));
+  assert.equal(JSON.stringify(result.groups.map(group => group.name)), JSON.stringify([
+    'Development', 'Development 2', 'Development 3', 'Reading', 'Reading 2'
+  ]));
+  assert.equal(Math.max(...result.groups.map(group => group.tab_ids.length)), 15);
+  assert.equal(
+    JSON.stringify(result.groups.flatMap(group => group.tab_ids).sort((a, b) => a - b)),
+    JSON.stringify(Array.from({ length: 61 }, (_, index) => index + 1))
+  );
+});
+
+test('classifyTabsCodex reports invalid shared category plans', async () => {
+  let requests = 0;
+  const context = loadCodex({
+    chrome: {
+      runtime: {
+        lastError: null,
+        sendNativeMessage: (_host, message, callback) => {
+          requests += 1;
+          assert.equal(message.action, 'plan');
+          callback({ ok: true, categories: [{ name: 'Other', color: 'grey' }] });
+        }
+      }
+    }
+  });
+  context.tabs = Array.from({ length: 51 }, (_, index) => ({
+    title: `Tab ${index + 1}`,
+    url: `https://site${index + 1}.example/`
+  }));
+
+  await assert.rejects(vm.runInContext('classifyTabsCodex(tabs)', context), error => {
+    assert.match(error.message, /could not produce a valid category plan/i);
+    assert.equal(error.details.length, 2);
+    assert.equal(error.details[0].title, 'Category plan · Attempt 1');
+    assert.equal(error.details[0].reasons.some(reason => /disallowed vague name/.test(reason)), true);
+    return true;
+  });
+  assert.equal(requests, 2);
+});

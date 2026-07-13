@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Chrome Native Messaging host that runs one constrained Codex classification."""
+"""Chrome Native Messaging host for constrained Codex planning and classification."""
 
 import json
 import os
@@ -13,6 +13,7 @@ import tempfile
 
 HOST_DIR = Path(__file__).resolve().parent
 SCHEMA_PATH = HOST_DIR / "group-schema.json"
+CATEGORY_SCHEMA_PATH = HOST_DIR / "category-schema.json"
 DEFAULT_MODEL = "gpt-5.6-luna"
 DEFAULT_REASONING_EFFORT = "medium"
 MAX_TABS = 300
@@ -87,7 +88,7 @@ def clean_text(value, limit):
     return " ".join(str(value or "").replace("\x00", " ").split())[:limit]
 
 
-def classification_prompt(tabs, strict_retry=False):
+def format_tabs(tabs):
     lines = []
     for tab in tabs:
         lines.append("%d. %s (%s)" % (
@@ -95,22 +96,37 @@ def classification_prompt(tabs, strict_retry=False):
             clean_text(tab.get("title"), 160),
             clean_text(tab.get("url"), 240),
         ))
+    return "\n".join(lines)
+
+
+def classification_prompt(tabs, strict_retry=False, allowed_categories=None):
     minimum_group_count = (len(tabs) + 14) // 15
+    minimum_group_label = "group" if minimum_group_count == 1 else "groups"
     retry_instruction = """
 This is a strict retry because the previous answer was rejected. Recount every input ID before answering and verify that the output is an exact partition.
 """ if strict_retry else ""
+    category_instruction = """
+- Use only the exact category names and matching colors listed below. A category may appear in multiple groups when needed to keep every group at 15 tabs or fewer; repeat its exact name without adding a suffix or modifier.
+
+Allowed categories:
+%s
+""" % "\n".join(
+        "- %s (%s)" % (clean_text(category.get("name"), 80), category.get("color"))
+        for category in (allowed_categories or [])
+    ) if allowed_categories else ""
     return """Group these browser tabs by the user's likely current intent.
 
 Return only the JSON required by the supplied schema. Rules:
 - Every tab ID must appear exactly once, with no duplicates or invented IDs.
 - Use specific task/topic names, usually 2-4 words. Infer intent from title, domain, and path.
-- Never put more than 15 tabs in one group. These %(tab_count)d tabs therefore require at least %(minimum_group_count)d groups.
+- Never put more than 15 tabs in one group. These %(tab_count)d tabs therefore require at least %(minimum_group_count)d %(minimum_group_label)s.
 - Prefer 6-12 tabs per group when they share a coherent intent; use smaller groups for genuinely distinct tasks.
 - Keep searches, tutorials, product pages, social/video pages, news stories, and reference/archive pages separate when their intents differ.
 - Keep different languages together only when the underlying task/topic matches.
 - Never use Other, Miscellaneous, General, Uncategorized, Various, News & Media, or Needs Review.
 - Colors must be one of grey, blue, red, yellow, green, pink, purple, cyan, orange.
 - Do not inspect files, run commands, browse the web, or explain the answer.
+%(category_instruction)s
 %(retry_instruction)s
 
 Tabs:
@@ -118,24 +134,53 @@ Tabs:
 """ % {
         "tab_count": len(tabs),
         "minimum_group_count": minimum_group_count,
+        "minimum_group_label": minimum_group_label,
         "retry_instruction": retry_instruction,
-        "tabs": "\n".join(lines),
+        "category_instruction": category_instruction,
+        "tabs": format_tabs(tabs),
     }
 
 
-def classify(message):
+def category_plan_prompt(tabs, strict_retry=False):
+    minimum_categories = max(8, min(12, (len(tabs) + 19) // 20))
+    maximum_categories = min(20, minimum_categories + 8)
+    retry_instruction = """
+This is a strict retry because the previous category plan was invalid. Return unique, specific category names within the requested range.
+""" if strict_retry else ""
+    return """Design a reusable intent taxonomy for these browser tabs.
+
+Return only the JSON required by the supplied schema. Rules:
+- Create %(minimum_categories)d-%(maximum_categories)d unique categories that collectively fit the tabs' likely current intents.
+- Use specific task/topic names, usually 2-4 words. Infer intent from title, domain, and path.
+- Categories will be reused to classify smaller batches, so keep related work under stable names without collapsing genuinely different intents.
+- Keep searches, tutorials, product pages, social/video pages, news stories, and reference/archive pages separate when their intents differ.
+- Never use Other, Miscellaneous, General, Uncategorized, Various, News & Media, or Needs Review.
+- Colors must be one of grey, blue, red, yellow, green, pink, purple, cyan, orange.
+- Do not assign tab IDs, inspect files, run commands, browse the web, or explain the answer.
+%(retry_instruction)s
+
+Tabs:
+%(tabs)s
+""" % {
+        "minimum_categories": minimum_categories,
+        "maximum_categories": maximum_categories,
+        "retry_instruction": retry_instruction,
+        "tabs": format_tabs(tabs),
+    }
+
+
+def validate_tabs(message):
     tabs = message.get("tabs")
     if not isinstance(tabs, list) or not tabs or len(tabs) > MAX_TABS:
-        return {"ok": False, "error": "Expected between 1 and %d tabs" % MAX_TABS}
+        return None, {"ok": False, "error": "Expected between 1 and %d tabs" % MAX_TABS}
     expected_ids = list(range(1, len(tabs) + 1))
     actual_ids = [tab.get("id") for tab in tabs if isinstance(tab, dict)]
     if actual_ids != expected_ids:
-        return {"ok": False, "error": "Tab IDs must be consecutive starting at 1"}
+        return None, {"ok": False, "error": "Tab IDs must be consecutive starting at 1"}
+    return tabs, None
 
-    ready = status()
-    if not ready["ok"]:
-        return ready
 
+def run_codex(prompt, schema_path):
     binary = codex_path()
     model = os.environ.get("TIDY_TABS_CODEX_MODEL", DEFAULT_MODEL)
     with tempfile.TemporaryDirectory(prefix="tidy-tabs-codex-") as temp_dir:
@@ -154,7 +199,7 @@ def classify(message):
             "--config",
             'model_reasoning_effort="%s"' % DEFAULT_REASONING_EFFORT,
             "--output-schema",
-            str(SCHEMA_PATH),
+            str(schema_path),
             "--output-last-message",
             str(output_path),
             "-",
@@ -162,7 +207,7 @@ def classify(message):
         try:
             completed = subprocess.run(
                 command,
-                input=classification_prompt(tabs, bool(message.get("strict_retry"))),
+                input=prompt,
                 text=True,
                 capture_output=True,
                 timeout=150,
@@ -180,12 +225,69 @@ def classify(message):
             response = json.loads(output_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             return {"ok": False, "error": "Codex returned invalid JSON: %s" % exc}
-        return {
-            "ok": True,
-            "groups": response.get("groups", []),
-            "model": model,
-            "reasoning_effort": DEFAULT_REASONING_EFFORT,
-        }
+        return {"ok": True, "response": response, "model": model}
+
+
+def classify(message):
+    tabs, error = validate_tabs(message)
+    if error:
+        return error
+
+    ready = status()
+    if not ready["ok"]:
+        return ready
+
+    allowed_categories = message.get("allowed_categories")
+    if allowed_categories is not None:
+        if not isinstance(allowed_categories, list) or not 2 <= len(allowed_categories) <= 30:
+            return {"ok": False, "error": "Expected between 2 and 30 allowed categories"}
+        if any(
+            not isinstance(category, dict)
+            or not clean_text(category.get("name"), 80)
+            or category.get("color") not in ("grey", "blue", "red", "yellow", "green", "pink", "purple", "cyan", "orange")
+            for category in allowed_categories
+        ):
+            return {"ok": False, "error": "Allowed categories are invalid"}
+
+    result = run_codex(
+        classification_prompt(
+            tabs,
+            bool(message.get("strict_retry")),
+            allowed_categories,
+        ),
+        SCHEMA_PATH,
+    )
+    if not result["ok"]:
+        return result
+    return {
+        "ok": True,
+        "groups": result["response"].get("groups", []),
+        "model": result["model"],
+        "reasoning_effort": DEFAULT_REASONING_EFFORT,
+    }
+
+
+def plan_categories(message):
+    tabs, error = validate_tabs(message)
+    if error:
+        return error
+
+    ready = status()
+    if not ready["ok"]:
+        return ready
+
+    result = run_codex(
+        category_plan_prompt(tabs, bool(message.get("strict_retry"))),
+        CATEGORY_SCHEMA_PATH,
+    )
+    if not result["ok"]:
+        return result
+    return {
+        "ok": True,
+        "categories": result["response"].get("categories", []),
+        "model": result["model"],
+        "reasoning_effort": DEFAULT_REASONING_EFFORT,
+    }
 
 
 def handle(message):
@@ -196,6 +298,8 @@ def handle(message):
         return status()
     if action == "classify":
         return classify(message)
+    if action == "plan":
+        return plan_categories(message)
     return {"ok": False, "error": "Unknown action"}
 
 

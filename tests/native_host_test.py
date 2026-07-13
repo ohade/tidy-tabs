@@ -145,6 +145,57 @@ class NativeHostTest(unittest.TestCase):
         self.assertIn("strict retry", prompt)
         self.assertIn("Needs Review", prompt)
 
+    def test_category_plan_and_allowed_category_prompts(self):
+        tabs = [
+            {"id": index, "title": "Tab %d" % index, "url": "https://example.test/%d" % index}
+            for index in range(1, 62)
+        ]
+        categories = [
+            {"name": "Development", "color": "blue"},
+            {"name": "Reading", "color": "green"},
+        ]
+
+        plan_prompt = HOST.category_plan_prompt(tabs, strict_retry=True)
+        classify_prompt = HOST.classification_prompt(
+            tabs[:10],
+            strict_retry=False,
+            allowed_categories=categories,
+        )
+
+        self.assertIn("Create 8-16 unique categories", plan_prompt)
+        self.assertIn("strict retry", plan_prompt)
+        self.assertIn("Use only the exact category names", classify_prompt)
+        self.assertIn("- Development (blue)", classify_prompt)
+        self.assertIn("- Reading (green)", classify_prompt)
+
+    def test_plan_categories_uses_category_schema(self):
+        completed = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        captured = {}
+
+        def run(command, **kwargs):
+            captured["command"] = command
+            captured.update(kwargs)
+            output_index = command.index("--output-last-message") + 1
+            Path(command[output_index]).write_text(
+                '{"categories":[{"name":"Development","color":"blue"}]}',
+                encoding="utf-8",
+            )
+            return completed
+
+        with (
+            mock.patch.object(HOST, "status", return_value={"ok": True}),
+            mock.patch.object(HOST, "codex_path", return_value="/opt/homebrew/bin/codex"),
+            mock.patch.object(HOST.subprocess, "run", side_effect=run),
+        ):
+            result = HOST.plan_categories(
+                {"tabs": [{"id": 1, "title": "Pull request", "url": "https://example.test"}]}
+            )
+
+        schema_index = captured["command"].index("--output-schema") + 1
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["categories"][0]["name"], "Development")
+        self.assertEqual(captured["command"][schema_index], str(HOST.CATEGORY_SCHEMA_PATH))
+
 
 if __name__ == "__main__":
     unittest.main()
