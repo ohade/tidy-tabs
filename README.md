@@ -41,6 +41,8 @@ Recognizable browser error pages are separated deterministically and are not sen
    env -i HOME="$HOME" PATH=/usr/bin:/bin:/usr/sbin:/sbin ./native/tidy_tabs_host.py --status
    ```
 
+   It also probes the framed native-messaging request with Chrome's caller-origin argument, so installation fails if the host cannot start exactly as Chrome starts it.
+
 3. Open `chrome://extensions/`, enable Developer mode, choose **Load unpacked**, and select this repository. Reload the extension after host or code updates.
 
 The checked-in manifest key keeps the unpacked extension ID stable so Chrome can authorize the native host.
@@ -67,6 +69,7 @@ tidy-tabs/
 |   `-- ollama.js             Disabled Ollama provider retained as fallback
 |-- native/
 |   |-- tidy_tabs_host.py     Constrained Codex CLI bridge
+|   |-- probe_host.py         Chrome-shaped native-host readiness probe
 |   |-- group-schema.json     Structured response contract
 |   `-- install-host.sh       Per-user Chrome host installer
 `-- icons/                    Static and animated broom icons

@@ -1,7 +1,14 @@
+import base64
+import contextlib
+import hashlib
 import importlib.util
+import io
+import json
 import os
 from pathlib import Path
 import subprocess
+import struct
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -14,6 +21,60 @@ SPEC.loader.exec_module(HOST)
 
 
 class NativeHostTest(unittest.TestCase):
+    def test_chrome_origin_runs_native_message_protocol(self):
+        payload = json.dumps({"action": "unknown"}).encode("utf-8")
+        completed = subprocess.run(
+            [sys.executable, str(HOST_PATH), HOST.CHROME_EXTENSION_ORIGIN],
+            input=struct.pack("<I", len(payload)) + payload,
+            capture_output=True,
+            timeout=5,
+            check=False,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr.decode())
+        length = struct.unpack("<I", completed.stdout[:4])[0]
+        response = json.loads(completed.stdout[4:4 + length])
+        self.assertEqual(response, {"ok": False, "error": "Unknown action"})
+
+    def test_cli_accepts_only_supported_argument_shapes(self):
+        with mock.patch.object(HOST, "main", return_value=0) as main:
+            self.assertEqual(HOST.cli([]), 0)
+            self.assertEqual(HOST.cli([HOST.CHROME_EXTENSION_ORIGIN]), 0)
+            self.assertEqual(main.call_count, 2)
+
+        with (
+            mock.patch.object(HOST, "status", return_value={"ok": True}),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            self.assertEqual(HOST.cli(["--status"]), 0)
+
+        with (
+            mock.patch.object(HOST, "main", return_value=0) as main,
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            self.assertEqual(HOST.cli(["chrome-extension://wrong/"]), 2)
+            self.assertEqual(HOST.cli([HOST.CHROME_EXTENSION_ORIGIN, "extra"]), 2)
+            self.assertEqual(HOST.cli(["--status", "extra"]), 2)
+            main.assert_not_called()
+
+    def test_manifest_key_native_manifest_and_host_origin_match(self):
+        extension_manifest = json.loads(
+            (HOST_PATH.parents[1] / "manifest.json").read_text(encoding="utf-8")
+        )
+        digest = hashlib.sha256(base64.b64decode(extension_manifest["key"])).digest()[:16]
+        extension_id = "".join(
+            chr(ord("a") + nibble)
+            for byte in digest
+            for nibble in (byte >> 4, byte & 0x0F)
+        )
+        native_manifest = json.loads(
+            (HOST_PATH.parent / "com.ohade.tidy_tabs.json").read_text(encoding="utf-8")
+        )
+
+        expected_origin = "chrome-extension://%s/" % extension_id
+        self.assertEqual(HOST.CHROME_EXTENSION_ORIGIN, expected_origin)
+        self.assertEqual(native_manifest["allowed_origins"], [expected_origin])
+
     def test_codex_environment_adds_homebrew_bin_to_restricted_path(self):
         with mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin"}, clear=True):
             env = HOST.codex_environment("/opt/homebrew/bin/codex")

@@ -15,6 +15,7 @@ HOST_DIR = Path(__file__).resolve().parent
 SCHEMA_PATH = HOST_DIR / "group-schema.json"
 DEFAULT_MODEL = "gpt-5.4-mini"
 MAX_TABS = 300
+CHROME_EXTENSION_ORIGIN = "chrome-extension://oplpfnkemfoeflcondmciheffcogbfge/"
 
 
 def read_message():
@@ -189,12 +190,13 @@ def main():
         return 1
 
 
-def cli():
-    if sys.argv[1:] == ["--status"]:
+def cli(args=None):
+    args = sys.argv[1:] if args is None else args
+    if args == ["--status"]:
         result = status()
         print(json.dumps(result, ensure_ascii=False))
         return 0 if result["ok"] else 1
-    if sys.argv[1:]:
+    if args not in ([], [CHROME_EXTENSION_ORIGIN]):
         print("Usage: tidy_tabs_host.py [--status]", file=sys.stderr)
         return 2
     return main()
