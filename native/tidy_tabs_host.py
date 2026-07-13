@@ -124,6 +124,8 @@ Allowed categories:
 Return only the JSON required by the supplied schema. Rules:
 - Every tab ID must appear exactly once, with no duplicates or invented IDs.
 - Treat each title, domain, and URL path as evidence of why the user opened the tab. Do not group primarily by website, tool, or page format.
+- Use this priority order: exact recurring identifiers (ticket IDs, repository names, named products/projects), then the shared user goal, and only then domain or page type.
+- A build, pull request, ticket, dashboard, document, or log carrying the same project or ticket identifier belongs to that specific workstream, not to a generic Build Pipeline, Code Review, Dashboard, or Observability group.
 - Prefer a concrete named project, product, investigation, or workstream when the evidence supports one. Pull requests, dashboards, documentation, searches, and tickets for the same workstream belong together.
 - Use specific intent names, usually 2-4 words. Avoid generic activity or tool buckets such as Developer Tools, Data Querying, Dashboard Review, AI Research, or Platform Access when a concrete workstream can be inferred.
 - Make groups mutually exclusive. If two labels could accept the same tab, choose the narrower intent and do not invent a parallel near-duplicate.
@@ -150,20 +152,23 @@ Tabs:
 
 
 def category_plan_prompt(tabs, strict_retry=False):
-    minimum_categories = max(8, min(12, (len(tabs) + 24) // 25))
-    maximum_categories = min(16, minimum_categories + 4)
+    minimum_categories = max(8, min(24, (len(tabs) + 13) // 14))
+    maximum_categories = min(30, max(minimum_categories + 4, (len(tabs) + 8) // 9))
     retry_instruction = """
 This is a strict retry because the previous category plan was invalid. Return unique, specific category names within the requested range.
 """ if strict_retry else ""
     return """Design a reusable, mutually exclusive intent taxonomy for these browser tabs.
 
 Return only the JSON required by the supplied schema. Rules:
-- Create %(minimum_categories)d-%(maximum_categories)d unique categories that collectively fit the tabs' likely current projects, tasks, and decisions. Use the fewest categories in that range that preserve genuinely different intents.
+- Create %(minimum_categories)d-%(maximum_categories)d unique categories that collectively fit the tabs' likely current projects, tasks, and decisions. Aim for roughly 8-16 assigned tabs per category; do not deliberately create an umbrella that would absorb more than 20 tabs when recurring named subprojects can separate it cleanly.
 - First infer recurring named projects, products, investigations, and workstreams from titles, domains, and paths. Treat websites, tools, and page formats as evidence, not as the organizing principle.
+- Use this priority order: exact recurring identifiers (ticket IDs, repository names, named products/projects), then the shared user goal, and only then domain or page type.
+- Keep a ticket or named project together across its pull requests, builds, dashboards, documentation, logs, and Jira pages. Do not create page-type categories such as Release Pipeline, Code Review, Dashboards, or Runtime Observability for tabs that expose a more specific shared project identifier.
 - Prefer a concrete workstream such as Customer Portal Migration or Release Pipeline Reliability over a generic bucket such as Developer Tools, Data Querying, Dashboard Review, AI Research, or Platform Access when the evidence supports it.
 - Pull requests, dashboards, documentation, searches, and tickets for the same workstream should share one category. Separate page types only when their underlying intents differ.
 - Make category boundaries mutually exclusive. Merge categories that overlap, differ only by tool/page type, or would compete for the same tabs.
-- Give every category a short description that says what belongs there and distinguishes it from its nearest neighboring category. Later batches will rely on these descriptions.
+- Split broad umbrellas when they contain multiple recurring named products, projects, hobbies, or investigations. Do not combine unrelated named projects merely because they are all AI tools, internal work, news, or leisure browsing.
+- Give every category a short description with positive anchor terms (identifiers, project names, or topic signals) and an explicit boundary from its nearest neighbor. Later batches will rely on these descriptions.
 - Use specific category names, usually 2-4 words. Do not create a category for a single isolated page when a specific existing workstream reasonably fits it.
 - Never use Other, Miscellaneous, General, Uncategorized, Various, News & Media, or Needs Review.
 - Colors must be one of grey, blue, red, yellow, green, pink, purple, cyan, orange.

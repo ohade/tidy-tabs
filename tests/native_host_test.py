@@ -182,6 +182,20 @@ class NativeHostTest(unittest.TestCase):
         )
         self.assertIn("underlying intents differ", classify_prompt)
 
+    def test_large_category_plan_scales_with_tab_volume_and_prioritizes_identifiers(self):
+        tabs = [
+            {"id": index, "title": "Tab %d" % index, "url": "https://example.test/%d" % index}
+            for index in range(1, 236)
+        ]
+
+        prompt = HOST.category_plan_prompt(tabs)
+
+        self.assertIn("Create 17-27 unique categories", prompt)
+        self.assertIn("Aim for roughly 8-16 assigned tabs per category", prompt)
+        self.assertIn("exact recurring identifiers", prompt)
+        self.assertIn("Do not create page-type categories", prompt)
+        self.assertIn("Split broad umbrellas", prompt)
+
     def test_plan_categories_uses_category_schema(self):
         completed = subprocess.CompletedProcess([], 0, stdout="", stderr="")
         captured = {}
