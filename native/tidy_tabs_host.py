@@ -13,7 +13,8 @@ import tempfile
 
 HOST_DIR = Path(__file__).resolve().parent
 SCHEMA_PATH = HOST_DIR / "group-schema.json"
-DEFAULT_MODEL = "gpt-5.4-mini"
+DEFAULT_MODEL = "gpt-5.6-luna"
+DEFAULT_REASONING_EFFORT = "medium"
 MAX_TABS = 300
 CHROME_EXTENSION_ORIGIN = "chrome-extension://oplpfnkemfoeflcondmciheffcogbfge/"
 
@@ -75,14 +76,18 @@ def status():
     if check.returncode != 0:
         detail = (check.stderr or check.stdout or "Codex is not logged in").strip()
         return {"ok": False, "error": detail[-500:]}
-    return {"ok": True, "model": os.environ.get("TIDY_TABS_CODEX_MODEL", DEFAULT_MODEL)}
+    return {
+        "ok": True,
+        "model": os.environ.get("TIDY_TABS_CODEX_MODEL", DEFAULT_MODEL),
+        "reasoning_effort": DEFAULT_REASONING_EFFORT,
+    }
 
 
 def clean_text(value, limit):
     return " ".join(str(value or "").replace("\x00", " ").split())[:limit]
 
 
-def classification_prompt(tabs):
+def classification_prompt(tabs, strict_retry=False):
     lines = []
     for tab in tabs:
         lines.append("%d. %s (%s)" % (
@@ -90,21 +95,32 @@ def classification_prompt(tabs):
             clean_text(tab.get("title"), 160),
             clean_text(tab.get("url"), 240),
         ))
+    minimum_group_count = (len(tabs) + 14) // 15
+    retry_instruction = """
+This is a strict retry because the previous answer was rejected. Recount every input ID before answering and verify that the output is an exact partition.
+""" if strict_retry else ""
     return """Group these browser tabs by the user's likely current intent.
 
 Return only the JSON required by the supplied schema. Rules:
 - Every tab ID must appear exactly once, with no duplicates or invented IDs.
 - Use specific task/topic names, usually 2-4 words. Infer intent from title, domain, and path.
-- Prefer 3-12 coherent groups, but never put more than 15 tabs in one group.
+- Never put more than 15 tabs in one group. These %(tab_count)d tabs therefore require at least %(minimum_group_count)d groups.
+- Prefer 6-12 tabs per group when they share a coherent intent; use smaller groups for genuinely distinct tasks.
 - Keep searches, tutorials, product pages, social/video pages, news stories, and reference/archive pages separate when their intents differ.
 - Keep different languages together only when the underlying task/topic matches.
-- Never use Other, Miscellaneous, General, Uncategorized, Various, or News & Media.
+- Never use Other, Miscellaneous, General, Uncategorized, Various, News & Media, or Needs Review.
 - Colors must be one of grey, blue, red, yellow, green, pink, purple, cyan, orange.
 - Do not inspect files, run commands, browse the web, or explain the answer.
+%(retry_instruction)s
 
 Tabs:
-%s
-""" % "\n".join(lines)
+%(tabs)s
+""" % {
+        "tab_count": len(tabs),
+        "minimum_group_count": minimum_group_count,
+        "retry_instruction": retry_instruction,
+        "tabs": "\n".join(lines),
+    }
 
 
 def classify(message):
@@ -136,7 +152,7 @@ def classify(message):
             "--model",
             model,
             "--config",
-            'model_reasoning_effort="low"',
+            'model_reasoning_effort="%s"' % DEFAULT_REASONING_EFFORT,
             "--output-schema",
             str(SCHEMA_PATH),
             "--output-last-message",
@@ -146,7 +162,7 @@ def classify(message):
         try:
             completed = subprocess.run(
                 command,
-                input=classification_prompt(tabs),
+                input=classification_prompt(tabs, bool(message.get("strict_retry"))),
                 text=True,
                 capture_output=True,
                 timeout=150,
@@ -164,7 +180,12 @@ def classify(message):
             response = json.loads(output_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             return {"ok": False, "error": "Codex returned invalid JSON: %s" % exc}
-        return {"ok": True, "groups": response.get("groups", []), "model": model}
+        return {
+            "ok": True,
+            "groups": response.get("groups", []),
+            "model": model,
+            "reasoning_effort": DEFAULT_REASONING_EFFORT,
+        }
 
 
 def handle(message):

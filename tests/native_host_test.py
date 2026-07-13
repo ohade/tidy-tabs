@@ -104,6 +104,7 @@ class NativeHostTest(unittest.TestCase):
         captured = {}
 
         def run(command, **kwargs):
+            captured["command"] = command
             captured.update(kwargs)
             output_index = command.index("--output-last-message") + 1
             Path(command[output_index]).write_text(
@@ -123,7 +124,26 @@ class NativeHostTest(unittest.TestCase):
             )
 
         self.assertTrue(result["ok"])
+        self.assertEqual(result["reasoning_effort"], "medium")
         self.assertEqual(captured["env"]["PATH"].split(os.pathsep)[0], "/opt/homebrew/bin")
+        model_index = captured["command"].index("--model") + 1
+        config_index = captured["command"].index("--config") + 1
+        self.assertEqual(captured["command"][model_index], "gpt-5.6-luna")
+        self.assertEqual(
+            captured["command"][config_index], 'model_reasoning_effort="medium"'
+        )
+
+    def test_strict_retry_prompt_requires_recount_and_dynamic_minimum(self):
+        tabs = [
+            {"id": index, "title": "Tab %d" % index, "url": "https://example.test/%d" % index}
+            for index in range(1, 32)
+        ]
+
+        prompt = HOST.classification_prompt(tabs, strict_retry=True)
+
+        self.assertIn("These 31 tabs therefore require at least 3 groups", prompt)
+        self.assertIn("strict retry", prompt)
+        self.assertIn("Needs Review", prompt)
 
 
 if __name__ == "__main__":

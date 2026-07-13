@@ -25,10 +25,17 @@ function chromeWithResponse(response) {
 }
 
 test('checkCodexReady accepts the installed native host', async () => {
-  const context = loadCodex({ chrome: chromeWithResponse({ ok: true, model: 'gpt-5.4-mini' }) });
+  const context = loadCodex({
+    chrome: chromeWithResponse({
+      ok: true,
+      model: 'gpt-5.6-luna',
+      reasoning_effort: 'medium'
+    })
+  });
   const result = await vm.runInContext('checkCodexReady()', context);
   assert.equal(result.ok, true);
-  assert.equal(result.model, 'gpt-5.4-mini');
+  assert.equal(result.model, 'gpt-5.6-luna');
+  assert.equal(result.reasoningEffort, 'medium');
 });
 
 test('checkCodexReady reports host installation guidance', async () => {
@@ -63,6 +70,7 @@ test('classifyTabsCodex sends one request and separates browser errors', async (
 
   const result = await vm.runInContext('classifyTabsCodex(tabs)', context);
   assert.equal(request.action, 'classify');
+  assert.equal(request.strict_retry, false);
   assert.equal(request.tabs.length, 2);
   assert.equal(result.groups.find(group => group.name === 'Errors').tab_ids[0], 1);
   assert.equal(
@@ -71,12 +79,28 @@ test('classifyTabsCodex sends one request and separates browser errors', async (
   );
 });
 
-test('classifyTabsCodex repairs incomplete output without a huge catch-all group', async () => {
-  const context = loadCodex({
-    chrome: chromeWithResponse({
+test('classifyTabsCodex retries incomplete output instead of creating review groups', async () => {
+  const requests = [];
+  const responses = [
+    { ok: true, groups: [{ name: 'Work', color: 'blue', tab_ids: [1, 2] }] },
+    {
       ok: true,
-      groups: [{ name: 'Work', color: 'blue', tab_ids: [1, 2] }]
-    })
+      groups: [
+        { name: 'Work', color: 'blue', tab_ids: [1, 2, 3, 4] },
+        { name: 'Reading', color: 'green', tab_ids: [5, 6, 7, 8] }
+      ]
+    }
+  ];
+  const context = loadCodex({
+    chrome: {
+      runtime: {
+        lastError: null,
+        sendNativeMessage: (_host, message, callback) => {
+          requests.push(message);
+          callback(responses.shift());
+        }
+      }
+    }
   });
   context.tabs = Array.from({ length: 8 }, (_, index) => ({
     title: `Tab ${index + 1}`,
@@ -84,7 +108,35 @@ test('classifyTabsCodex repairs incomplete output without a huge catch-all group
   }));
 
   const result = await vm.runInContext('classifyTabsCodex(tabs)', context);
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].strict_retry, false);
+  assert.equal(requests[1].strict_retry, true);
   assert.equal(JSON.stringify(result.groups.flatMap(group => group.tab_ids).sort((a, b) => a - b)), JSON.stringify([1, 2, 3, 4, 5, 6, 7, 8]));
-  assert.equal(Math.max(...result.groups.map(group => group.tab_ids.length)) <= 5, true);
-  assert.match(result.warnings[0], /needed repair/i);
+  assert.equal(result.groups.some(group => group.name.startsWith('Needs Review')), false);
+  assert.match(result.warnings[0], /strict retry succeeded/i);
+});
+
+test('classifyTabsCodex rejects repeatedly incomplete output', async () => {
+  let requests = 0;
+  const context = loadCodex({
+    chrome: {
+      runtime: {
+        lastError: null,
+        sendNativeMessage: (_host, _message, callback) => {
+          requests += 1;
+          callback({ ok: true, groups: [{ name: 'Work', color: 'blue', tab_ids: [1] }] });
+        }
+      }
+    }
+  });
+  context.tabs = [
+    { title: 'One', url: 'https://one.example/' },
+    { title: 'Two', url: 'https://two.example/' }
+  ];
+
+  await assert.rejects(
+    vm.runInContext('classifyTabsCodex(tabs)', context),
+    /could not produce a complete grouping after 2 attempts; no tab groups were changed/i
+  );
+  assert.equal(requests, 2);
 });

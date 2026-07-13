@@ -1,18 +1,20 @@
 # Tidy Tabs
 
-One-click AI-powered Chrome tab organizer using Codex. Click the broom icon to merge non-incognito windows, classify ungrouped tabs, create named and colored groups, and open a visible run report.
+One-click AI-powered Chrome tab organizer using Codex. Click the broom icon to merge non-incognito windows, reclassify all eligible tabs, create named and colored groups, and open a visible run report.
 
-Already-grouped tabs are left untouched.
+Every click is a full re-tidy. Existing groups are ignored and replaced only after Codex returns a complete, valid classification.
 
 ## How It Works
 
 ```text
 Click broom icon
   -> Validate the local Codex native host
-  -> Merge all non-incognito windows into one
-  -> Collect ungrouped tab titles and URLs
-  -> Send one schema-constrained request to Codex gpt-5.4-mini (low reasoning)
+  -> Collect eligible tab titles and URLs across non-incognito windows
+  -> Send one schema-constrained request to Codex gpt-5.6-luna (medium reasoning)
+  -> Retry once if Codex omits, duplicates, or mis-groups any tab ID
   -> Validate that every tab appears exactly once and no group exceeds 15 tabs
+  -> Merge all non-incognito windows into one
+  -> Clear previous eligible groups
   -> Create and collapse Chrome tab groups
   -> Open a report with status, warnings, and group counts
 ```
@@ -54,7 +56,8 @@ Click the broom icon.
 - The broom animates while Codex groups the tabs.
 - A green badge shows the group count on success.
 - A red `!` badge indicates an error; the opened report contains the full error.
-- Existing tab groups are preserved.
+- Existing eligible tab groups are replaced on every successful run, so clicking again re-tidies the browser.
+- If both classification attempts are invalid, the run stops before moving tabs or clearing groups.
 - The active provider is `ACTIVE_PROVIDER` in `background.js`.
 
 ## Architecture
@@ -77,7 +80,7 @@ tidy-tabs/
 
 ## Provider Choice
 
-Codex is active by default because the local 4B model produced inconsistent topics and oversized groups. `gpt-5.4-mini` is the smallest model currently exposed by this machine's Codex account. The host uses low reasoning and one request per run to limit latency and usage.
+Codex is active by default because the local 4B model produced inconsistent topics and oversized groups. The host uses `gpt-5.6-luna` with medium reasoning. It retries once when the first response is incomplete and refuses to mutate Chrome if both responses fail exact-partition validation.
 
 The Ollama implementation remains in `lib/ollama.js`. To restore it later, set `ACTIVE_PROVIDER` to `ollama`, reinstall the desired model, start Ollama, and reload the extension. The localhost host permission is deliberately retained for that reversible fallback.
 

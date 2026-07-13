@@ -111,10 +111,32 @@ async function handleTidy() {
     : await checkOllamaReady(DEFAULT_MODEL);
   if (!providerStatus.ok) return { error: providerStatus.error };
 
+  // Classify every eligible tab before mutating windows or existing groups.
+  // Put the target window first so the classification order is predictable.
+  const orderedWindows = [targetWindow, ...normalWindows.filter(win => win.id !== targetWindow.id)];
+  const tabsByWindow = new Map();
+  for (const win of orderedWindows) {
+    tabsByWindow.set(win.id, await chrome.tabs.query({ windowId: win.id }));
+  }
+  const validTabs = orderedWindows
+    .flatMap(win => tabsByWindow.get(win.id))
+    .filter(t =>
+      t.url && !t.url.startsWith('chrome://') && !t.url.startsWith('chrome-extension://') && !t.url.startsWith('about:')
+    );
+  console.log('[tidy] Tabs to classify:', validTabs.length);
+
+  if (validTabs.length < 2) return { error: 'Need at least 2 eligible tabs' };
+
+  console.log('[tidy] Classifying...');
+  const classification = ACTIVE_PROVIDER === 'codex'
+    ? await classifyTabsCodex(validTabs)
+    : await classifyTabs(validTabs, DEFAULT_MODEL);
+  console.log('[tidy] Result:', JSON.stringify(classification));
+
   // Move tabs from other windows into the target window
   for (const win of normalWindows) {
     if (win.id === targetWindow.id) continue;
-    const tabs = await chrome.tabs.query({ windowId: win.id });
+    const tabs = tabsByWindow.get(win.id) || [];
     const tabIds = tabs.map(t => t.id);
     if (tabIds.length > 0) {
       console.log(`[tidy] Merging ${tabIds.length} tabs from window ${win.id}`);
@@ -122,23 +144,17 @@ async function handleTidy() {
     }
   }
 
-  // Now query all tabs in the merged window
-  const tabs = await chrome.tabs.query({ windowId: targetWindow.id });
-  // Only classify ungrouped tabs — leave existing groups untouched
-  const validTabs = tabs.filter(t =>
-    t.groupId === -1 &&
-    t.url && !t.url.startsWith('chrome://') && !t.url.startsWith('chrome-extension://') && !t.url.startsWith('about:')
-  );
-  console.log('[tidy] Tabs to classify:', validTabs.length);
-
-  if (validTabs.length < 2) return { error: 'Need at least 2 ungrouped tabs' };
-
-  // Classify
-  console.log('[tidy] Classifying...');
-  const classification = ACTIVE_PROVIDER === 'codex'
-    ? await classifyTabsCodex(validTabs)
-    : await classifyTabs(validTabs, DEFAULT_MODEL);
-  console.log('[tidy] Result:', JSON.stringify(classification));
+  // A successful classification makes this a full re-tidy: clear any old
+  // eligible groups only now, immediately before applying the new grouping.
+  const eligibleTabIds = new Set(validTabs.map(tab => tab.id));
+  const mergedTabs = await chrome.tabs.query({ windowId: targetWindow.id });
+  const previouslyGroupedTabIds = mergedTabs
+    .filter(tab => eligibleTabIds.has(tab.id) && tab.groupId !== -1)
+    .map(tab => tab.id);
+  if (previouslyGroupedTabIds.length > 0) {
+    console.log(`[tidy] Re-tidying ${previouslyGroupedTabIds.length} previously grouped tabs`);
+    await chrome.tabs.ungroup(previouslyGroupedTabIds);
+  }
 
   // Create tab groups (collapsed)
   const results = [];
@@ -202,5 +218,10 @@ async function handleTidy() {
   }
 
   console.log('[tidy] Done:', results.length, 'groups');
-  return { success: true, groups: results, warnings: classification.warnings || [] };
+  return {
+    success: true,
+    groups: results,
+    warnings: classification.warnings || [],
+    retidiedTabs: previouslyGroupedTabIds.length
+  };
 }
