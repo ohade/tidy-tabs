@@ -58,13 +58,12 @@ test('classifyBatch includes Ollama response details in its error', async () => 
   );
 });
 
-test('handleTidy checks Ollama before moving tabs', async () => {
+test('handleTidy checks Codex before moving tabs', async () => {
   let moveCalls = 0;
   const context = loadScript('background.js', {
-    DEFAULT_MODEL: 'qwen3.5:4b',
-    checkOllamaReady: async () => ({
+    checkCodexReady: async () => ({
       ok: false,
-      error: 'Model qwen3.5:4b is not installed. Run: ollama pull qwen3.5:4b'
+      error: 'Codex host is not ready'
     }),
     clearInterval,
     importScripts: () => {},
@@ -97,7 +96,7 @@ test('handleTidy checks Ollama before moving tabs', async () => {
   });
 
   const result = await vm.runInContext('handleTidy()', context);
-  assert.equal(result.error, 'Model qwen3.5:4b is not installed. Run: ollama pull qwen3.5:4b');
+  assert.equal(result.error, 'Codex host is not ready');
   assert.equal(moveCalls, 0);
 });
 
@@ -319,9 +318,8 @@ test('handleTidy rolls back and reports group application failures', async () =>
   let groupCalls = 0;
   let rolledBack = [];
   const context = loadScript('background.js', {
-    DEFAULT_MODEL: 'qwen3.5:4b',
-    checkOllamaReady: async () => ({ ok: true }),
-    classifyTabs: async () => ({
+    checkCodexReady: async () => ({ ok: true }),
+    classifyTabsCodex: async () => ({
       groups: [
         { name: 'One', color: 'blue', tab_ids: [1] },
         { name: 'Two', color: 'green', tab_ids: [2] }
@@ -424,9 +422,8 @@ test('publishReport persists details and opens a visible report tab', async () =
 test('handleTidy reports collapse failures as warnings instead of failing the run', async () => {
   let updateCalls = 0;
   const context = loadScript('background.js', {
-    DEFAULT_MODEL: 'qwen3.5:4b',
-    checkOllamaReady: async () => ({ ok: true }),
-    classifyTabs: async () => ({
+    checkCodexReady: async () => ({ ok: true }),
+    classifyTabsCodex: async () => ({
       groups: [{ name: 'Work', color: 'blue', tab_ids: [1, 2] }],
       warnings: []
     }),
@@ -497,9 +494,8 @@ test('red-badge error paths persist and open a visible report', async () => {
 test('handleTidy reports groups that may remain when rollback fails', async () => {
   let groupCalls = 0;
   const context = loadScript('background.js', {
-    DEFAULT_MODEL: 'qwen3.5:4b',
-    checkOllamaReady: async () => ({ ok: true }),
-    classifyTabs: async () => ({
+    checkCodexReady: async () => ({ ok: true }),
+    classifyTabsCodex: async () => ({
       groups: [
         { name: 'One', color: 'blue', tab_ids: [1] },
         { name: 'Two', color: 'green', tab_ids: [2] }

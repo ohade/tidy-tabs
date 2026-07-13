@@ -1,7 +1,8 @@
-importScripts('lib/ollama.js');
+importScripts('lib/ollama.js', 'lib/codex.js');
 
 const CHROME_COLORS = ['grey', 'blue', 'red', 'yellow', 'green', 'pink', 'purple', 'cyan', 'orange'];
 const FRAME_COUNT = 6;
+const ACTIVE_PROVIDER = 'codex';
 
 let isRunning = false;
 let animTimer = null;
@@ -104,9 +105,11 @@ async function handleTidy() {
   const targetWindow = normalWindows.find(w => w.focused) || normalWindows[0];
   console.log('[tidy] Target window:', targetWindow.id, '| Total windows:', normalWindows.length);
 
-  // Validate the local backend before moving any tabs between windows.
-  const ollamaStatus = await checkOllamaReady(DEFAULT_MODEL);
-  if (!ollamaStatus.ok) return { error: ollamaStatus.error };
+  // Validate the active backend before moving any tabs between windows.
+  const providerStatus = ACTIVE_PROVIDER === 'codex'
+    ? await checkCodexReady()
+    : await checkOllamaReady(DEFAULT_MODEL);
+  if (!providerStatus.ok) return { error: providerStatus.error };
 
   // Move tabs from other windows into the target window
   for (const win of normalWindows) {
@@ -132,7 +135,9 @@ async function handleTidy() {
 
   // Classify
   console.log('[tidy] Classifying...');
-  const classification = await classifyTabs(validTabs, DEFAULT_MODEL);
+  const classification = ACTIVE_PROVIDER === 'codex'
+    ? await classifyTabsCodex(validTabs)
+    : await classifyTabs(validTabs, DEFAULT_MODEL);
   console.log('[tidy] Result:', JSON.stringify(classification));
 
   // Create tab groups (collapsed)

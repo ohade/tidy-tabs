@@ -1,102 +1,88 @@
 # Tidy Tabs
 
-One-click AI-powered Chrome tab organizer using a local LLM. Arc browser's "Tidy" feature — fully local, zero API cost.
-
-Click the broom icon → all non-incognito windows merge into one → tabs are classified into named, colored groups → groups collapse.
-
-## How It Works
-
-```
-Click broom icon
-  → Merge all non-incognito windows into one
-  → Collect ungrouped tab titles + URLs
-  → Send to local Ollama (Qwen 3.5-4B) in batches of up to 15
-  → Ollama returns JSON: { groups: [{ name, color, tab_ids }] }
-  → If >12 groups, a strict consolidation pass reduces them to 6-12
-  → chrome.tabs.group() + chrome.tabGroups.update() creates named, colored groups
-  → All groups collapsed — you see only group names
-```
+One-click AI-powered Chrome tab organizer using Codex. Click the broom icon to merge non-incognito windows, classify ungrouped tabs, create named and colored groups, and open a visible run report.
 
 Already-grouped tabs are left untouched.
 
+## How It Works
+
+```text
+Click broom icon
+  -> Validate the local Codex native host
+  -> Merge all non-incognito windows into one
+  -> Collect ungrouped tab titles and URLs
+  -> Send one schema-constrained request to Codex gpt-5.4-mini (low reasoning)
+  -> Validate that every tab appears exactly once and no group exceeds 15 tabs
+  -> Create and collapse Chrome tab groups
+  -> Open a report with status, warnings, and group counts
+```
+
+Recognizable browser error pages are separated deterministically and are not sent to the model. Other tab titles and URLs are sent to OpenAI through the authenticated Codex CLI.
+
 ## Prerequisites
 
-### 1. Install Ollama
+1. Install and authenticate the Codex CLI:
 
-```bash
-brew install ollama
-brew services start ollama
-```
+   ```bash
+   brew install --cask codex
+   codex login status
+   ```
 
-### 2. Pull the model
+2. Install the Chrome native messaging host:
 
-```bash
-ollama pull qwen3.5:4b
-```
+   ```bash
+   cd ~/git/playground/tidy-tabs
+   ./native/install-host.sh
+   ```
 
-Qwen 3.5-4B: a compact 3.4GB model with enough instruction-following quality for schema-constrained tab classification.
+   The installer verifies Codex using the restricted PATH Chrome native hosts receive. To rerun that check directly:
 
-### 3. Allow Chrome extension access
+   ```bash
+   env -i HOME="$HOME" PATH=/usr/bin:/bin:/usr/sbin:/sbin ./native/tidy_tabs_host.py --status
+   ```
 
-```bash
-launchctl setenv OLLAMA_ORIGINS "chrome-extension://*"
-brew services restart ollama
-```
+3. Open `chrome://extensions/`, enable Developer mode, choose **Load unpacked**, and select this repository. Reload the extension after host or code updates.
 
-### 4. Load the extension
-
-1. Open `chrome://extensions/`
-2. Enable **Developer mode**
-3. Click **Load unpacked** → select this `tidy-tabs/` directory
-4. Pin the broom icon to the toolbar
+The checked-in manifest key keeps the unpacked extension ID stable so Chrome can authorize the native host.
 
 ## Usage
 
-Click the broom icon. That's it.
+Click the broom icon.
 
-- Broom animates while working (~8-10s per batch of 15 tabs)
-- Green badge with group count when done
-- Red `!` badge on error (hover for details)
-- A visible report tab opens after every run with status, warnings, and group counts
-- Existing tab groups are preserved
-
-## Requirements
-
-- Chrome 146+ (Chrome 145 has a bug where collapsed group titles don't render)
-- macOS with Ollama running locally (tested on M4 Pro, 48GB RAM)
-- Qwen 3.5-4B model pulled
+- The broom animates while Codex groups the tabs.
+- A green badge shows the group count on success.
+- A red `!` badge indicates an error; the opened report contains the full error.
+- Existing tab groups are preserved.
+- The active provider is `ACTIVE_PROVIDER` in `background.js`.
 
 ## Architecture
 
-```
+```text
 tidy-tabs/
-├── manifest.json      # MV3 manifest — tabs, tabGroups, storage permissions
-├── background.js      # Service worker — icon click handler, tab merging, grouping
-├── report.{html,css,js} # Visible result/error report opened after every run
-├── lib/
-│   └── ollama.js      # Ollama API client — batching, structured output, JSON rescue
-└── icons/
-    ├── icon{16,48,128}.png    # Static broom icon
-    └── frame{0-5}_{16,48}.png # Animation frames
+|-- manifest.json             MV3 permissions and stable extension key
+|-- background.js             Click handler, tab merging, grouping, reports
+|-- report.{html,css,js}      Visible result/error report
+|-- lib/
+|   |-- codex.js              Active native-messaging client and validation
+|   `-- ollama.js             Disabled Ollama provider retained as fallback
+|-- native/
+|   |-- tidy_tabs_host.py     Constrained Codex CLI bridge
+|   |-- group-schema.json     Structured response contract
+|   `-- install-host.sh       Per-user Chrome host installer
+`-- icons/                    Static and animated broom icons
 ```
 
-## Key Design Decisions
+## Provider Choice
 
-| Decision | Choice | Why |
-|----------|--------|-----|
-| Model | Qwen 3.5-4B | Good structured output and group naming at roughly half the 9B footprint |
-| `think: false` | Disabled thinking | 5+ min → 6s response time |
-| `num_predict: 4096` | High token limit | Prevents JSON truncation on large batches |
-| Batch size 15 | Reliable structured output | Keeps Qwen 3.5-4B's JSON response stable on mixed-language tabs |
-| Consolidation pass | Strict 6-12 group partition | Rejects incomplete merges instead of creating a huge `Other` bucket |
-| No popup | Direct icon click | Arc-style UX — one click, no panel |
-| JSON regex rescue | Salvage partial output | Even malformed JSON yields usable groups |
+Codex is active by default because the local 4B model produced inconsistent topics and oversized groups. `gpt-5.4-mini` is the smallest model currently exposed by this machine's Codex account. The host uses low reasoning and one request per run to limit latency and usage.
 
-## Known Issues
+The Ollama implementation remains in `lib/ollama.js`. To restore it later, set `ACTIVE_PROVIDER` to `ollama`, reinstall the desired model, start Ollama, and reload the extension. The localhost host permission is deliberately retained for that reversible fallback.
 
-- **JSON parse failures**: Ollama occasionally produces invalid JSON despite `format` schema. Rescued groups must still cover every tab exactly once; otherwise the extension retries and puts unresolved tabs into bounded `Needs Review` groups with a visible warning.
-- **Semantic grouping**: Topic choices are model-generated, but vague catch-all names and groups larger than 15 tabs are rejected. Recognizable browser error pages are separated into `Errors`.
-- **Chrome 145**: Collapsed group titles don't render. Update to Chrome 146+.
+## Requirements
+
+- Chrome 146 or newer
+- Authenticated Codex CLI
+- macOS (the native-host installer renders the current repository path locally)
 
 ## License
 

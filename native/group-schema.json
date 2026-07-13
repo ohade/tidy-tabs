@@ -1,0 +1,26 @@
+{
+  "type": "object",
+  "properties": {
+    "groups": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "color": {
+            "type": "string",
+            "enum": ["grey", "blue", "red", "yellow", "green", "pink", "purple", "cyan", "orange"]
+          },
+          "tab_ids": {
+            "type": "array",
+            "items": { "type": "integer" }
+          }
+        },
+        "required": ["name", "color", "tab_ids"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["groups"],
+  "additionalProperties": false
+}

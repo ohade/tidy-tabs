@@ -1,0 +1,9 @@
+{
+  "name": "com.ohade.tidy_tabs",
+  "description": "Tidy Tabs Codex bridge",
+  "path": "__TIDY_TABS_HOST_PATH__",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://oplpfnkemfoeflcondmciheffcogbfge/"
+  ]
+}
