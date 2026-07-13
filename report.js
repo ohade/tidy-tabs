@@ -7,6 +7,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   const groups = document.getElementById('groups');
   const warningsSection = document.getElementById('warnings-section');
   const warnings = document.getElementById('warnings');
+  const detailsSection = document.getElementById('details-section');
+  const details = document.getElementById('details');
 
   if (!report) {
     status.textContent = 'No report';
@@ -30,6 +32,26 @@ document.addEventListener('DOMContentLoaded', async () => {
       const item = document.createElement('li');
       item.textContent = warning;
       warnings.appendChild(item);
+    }
+  }
+
+  if (Array.isArray(report.details) && report.details.length > 0) {
+    detailsSection.hidden = false;
+    for (const detail of report.details) {
+      const card = document.createElement('article');
+      card.className = 'detail-card';
+      const title = document.createElement('h3');
+      title.textContent = detail.title || 'Diagnostic';
+      const summary = document.createElement('p');
+      summary.textContent = detail.summary || 'The response failed validation.';
+      const reasons = document.createElement('ul');
+      for (const reason of Array.isArray(detail.reasons) ? detail.reasons : []) {
+        const item = document.createElement('li');
+        item.textContent = reason;
+        reasons.appendChild(item);
+      }
+      card.append(title, summary, reasons);
+      details.appendChild(card);
     }
   }
 

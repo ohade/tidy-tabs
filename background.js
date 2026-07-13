@@ -13,6 +13,7 @@ async function publishReport(report) {
     message: report.message || '',
     groups: report.groups || [],
     warnings: report.warnings || [],
+    details: report.details || [],
     timestamp: new Date().toISOString()
   };
   await chrome.storage.local.set({ lastTidyReport });
@@ -44,7 +45,8 @@ chrome.action.onClicked.addListener(async (tab) => {
         status: 'error',
         message: result.error,
         groups: result.groups,
-        warnings: result.warnings
+        warnings: result.warnings,
+        details: result.details
       });
     } else {
       const count = result.groups.length;
@@ -68,7 +70,7 @@ chrome.action.onClicked.addListener(async (tab) => {
     chrome.action.setBadgeText({ text: '!' });
     chrome.action.setBadgeBackgroundColor({ color: '#e04040' });
     chrome.action.setTitle({ title: `Error: ${err.message}` });
-    await tryPublishReport({ status: 'error', message: err.message });
+    await tryPublishReport({ status: 'error', message: err.message, details: err.details });
   } finally {
     stopIconAnimation();
     isRunning = false;

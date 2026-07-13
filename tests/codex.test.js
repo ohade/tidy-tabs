@@ -134,9 +134,34 @@ test('classifyTabsCodex rejects repeatedly incomplete output', async () => {
     { title: 'Two', url: 'https://two.example/' }
   ];
 
-  await assert.rejects(
-    vm.runInContext('classifyTabsCodex(tabs)', context),
-    /could not produce a complete grouping after 2 attempts; no tab groups were changed/i
-  );
+  await assert.rejects(vm.runInContext('classifyTabsCodex(tabs)', context), error => {
+    assert.match(error.message, /could not produce a complete grouping after 2 attempts; no tab groups were changed/i);
+    assert.equal(error.details.length, 2);
+    assert.equal(error.details[0].title, 'Attempt 1');
+    assert.equal(error.details[0].summary, 'Codex returned 1 group covering 1 of 2 model-classified tabs.');
+    assert.match(error.details[0].reasons[0], /1 tab ID was omitted/);
+    return true;
+  });
   assert.equal(requests, 2);
+});
+
+test('Codex diagnostics identify each exact-partition rule failure', () => {
+  const context = loadCodex({ chrome: chromeWithResponse({ ok: true }) });
+  context.rawGroups = [
+    { name: 'Other', color: 'grey', tab_ids: [1, 1, 5] },
+    { name: '', color: 'blue', tab_ids: [2] },
+    { name: 'Oversized', color: 'green', tab_ids: Array.from({ length: 16 }, () => 3) }
+  ];
+
+  const result = JSON.parse(vm.runInContext(
+    'JSON.stringify(describeCodexPartitionFailure(normalizeExactGroups(rawGroups, 4), 1))',
+    context
+  ));
+  assert.equal(result.summary, 'Codex returned 3 groups covering 1 of 4 model-classified tabs.');
+  assert.equal(result.reasons.some(reason => /3 tab IDs were omitted/.test(reason)), true);
+  assert.equal(result.reasons.some(reason => /assigned more than once/.test(reason)), true);
+  assert.equal(result.reasons.some(reason => /out-of-range/.test(reason)), true);
+  assert.equal(result.reasons.some(reason => /exceeded the 15-tab limit/.test(reason)), true);
+  assert.equal(result.reasons.some(reason => /had no name/.test(reason)), true);
+  assert.equal(result.reasons.some(reason => /disallowed vague name/.test(reason)), true);
 });

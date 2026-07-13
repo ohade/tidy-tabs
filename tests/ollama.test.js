@@ -521,12 +521,19 @@ test('publishReport persists details and opens a visible report tab', async () =
     status: 'error',
     message: 'Could not classify tabs',
     groups: [],
-    warnings: ['Model output needed repair']
+    warnings: ['Model output needed repair'],
+    details: [{
+      title: 'Attempt 1',
+      summary: 'Covered 8 of 10 tabs.',
+      reasons: ['2 tab IDs were omitted.']
+    }]
   };
   await vm.runInContext('publishReport(report)', context);
 
   assert.equal(storedReport.status, 'error');
   assert.equal(storedReport.message, 'Could not classify tabs');
+  assert.equal(storedReport.details[0].title, 'Attempt 1');
+  assert.equal(storedReport.details[0].reasons[0], '2 tab IDs were omitted.');
   assert.match(storedReport.timestamp, /^\d{4}-\d{2}-\d{2}T/);
   assert.equal(openedUrl, 'chrome-extension://tidy/report.html');
 });

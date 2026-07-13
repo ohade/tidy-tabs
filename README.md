@@ -56,6 +56,7 @@ Click the broom icon.
 - The broom animates while Codex groups the tabs.
 - A green badge shows the group count on success.
 - A red `!` badge indicates an error; the opened report contains the full error.
+- Invalid classifications include a privacy-safe, attempt-by-attempt explanation of omitted, duplicate, invented, oversized, vague, or malformed assignments.
 - Existing eligible tab groups are replaced on every successful run, so clicking again re-tidies the browser.
 - If both classification attempts are invalid, the run stops before moving tabs or clearing groups.
 - The active provider is `ACTIVE_PROVIDER` in `background.js`.
