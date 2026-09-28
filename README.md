@@ -24,7 +24,7 @@ Click broom icon
   -> Open (or refresh) the report with status, warnings, group counts, and a CSV export
 ```
 
-Recognizable browser error pages are separated deterministically and are not sent to the model. Other tab titles and URLs are sent to OpenAI through the authenticated Codex CLI.
+Recognizable browser error pages are separated deterministically and are not sent to the model. Other tab titles are sent to OpenAI through the authenticated Codex CLI, with each URL cut down to its scheme, host, and path. Credentials, query strings, and fragments never leave the browser.
 
 ## Prerequisites
 
@@ -69,7 +69,6 @@ Click the broom icon.
 - Tabs closed or changed while the model runs are skipped and listed as a warning instead of failing the run.
 - The report reuses its open tab instead of opening a new one each run.
 - If both classification attempts are invalid, the run stops before moving tabs or clearing groups.
-- The active provider is `ACTIVE_PROVIDER` in `background.js`.
 
 ## Architecture
 
@@ -80,7 +79,7 @@ tidy-tabs/
 |-- report.{html,css,js}      Visible result/error report
 |-- lib/
 |   |-- codex.js              Active native-messaging client and validation
-|   `-- ollama.js             Disabled Ollama provider retained as fallback
+|   `-- partition.js          Exact-partition and error-page validation
 |-- native/
 |   |-- tidy_tabs_host.py     Constrained Codex CLI bridge
 |   |-- probe_host.py         Chrome-shaped native-host readiness probe
@@ -92,9 +91,7 @@ tidy-tabs/
 
 ## Provider Choice
 
-Codex is active by default because the local 4B model produced inconsistent topics and oversized groups. The host uses `gpt-5.6-luna` with medium reasoning. Runs above 50 model-classified tabs first create a shared intent taxonomy with a short, mutually exclusive definition for every category, then assign batches of 50 against those definitions. The category range scales with tab volume toward roughly 8-16 tabs per final group. Exact ticket, repository, product, and project identifiers outrank website or page type, so a workstream's code, CI, docs, dashboards, and tickets stay together instead of falling into generic operational buckets. Model-response groups stay capped at 15 tabs for assignment reliability, but final assignments are merged into one Chrome group per taxonomy category. Invalid plans or batches retry once, and Chrome is not mutated unless every batch passes exact-partition validation.
-
-The Ollama implementation remains in `lib/ollama.js`. To restore it later, set `ACTIVE_PROVIDER` to `ollama`, reinstall the desired model, start Ollama, and reload the extension. The localhost host permission is deliberately retained for that reversible fallback.
+Tidy Tabs runs on Codex only. A local Ollama model gave inconsistent topics and oversized groups, and keeping it resident in the background cost too much for an occasionally used extension. The host uses `gpt-5.6-luna` with medium reasoning. Runs above 50 model-classified tabs first create a shared intent taxonomy with a short, mutually exclusive definition for every category, then assign batches of 50 against those definitions in parallel. The category range scales with tab volume toward roughly 8-16 tabs per final group. Exact ticket, repository, product, and project identifiers outrank website or page type, so a workstream's code, CI, docs, dashboards, and tickets stay together instead of falling into generic operational buckets. Model-response groups stay capped at 15 tabs for assignment reliability, but final assignments are merged into one Chrome group per taxonomy category. Invalid plans or batches retry once, and Chrome is not mutated unless every batch passes exact-partition validation.
 
 ## Requirements
 

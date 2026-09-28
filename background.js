@@ -1,8 +1,7 @@
-importScripts('lib/ollama.js', 'lib/codex.js');
+importScripts('lib/partition.js', 'lib/codex.js');
 
 const CHROME_COLORS = ['grey', 'blue', 'red', 'yellow', 'green', 'pink', 'purple', 'cyan', 'orange'];
 const FRAME_COUNT = 6;
-const ACTIVE_PROVIDER = 'codex';
 const INCREMENTAL_MAX_TABS = 50;
 const MAX_EXISTING_CATEGORIES = 60;
 const MAX_STORED_CATEGORIES = 200;
@@ -195,10 +194,8 @@ async function handleTidy({ mode = 'auto' } = {}) {
   const targetWindow = normalWindows.find(w => w.focused) || normalWindows[0];
   console.log('[tidy] Target window:', targetWindow.id, '| Total windows:', normalWindows.length);
 
-  // Validate the active backend before moving any tabs between windows.
-  const providerStatus = ACTIVE_PROVIDER === 'codex'
-    ? await checkCodexReady()
-    : await checkOllamaReady(DEFAULT_MODEL);
+  // Validate the Codex host before moving any tabs between windows.
+  const providerStatus = await checkCodexReady();
   if (!providerStatus.ok) return { error: providerStatus.error };
 
   // Classify every eligible tab before mutating windows or existing groups.
@@ -221,8 +218,7 @@ async function handleTidy({ mode = 'auto' } = {}) {
   let existing = { categories: [], groupsByName: new Map() };
   let tabsToClassify = validTabs;
   let runMode = 'full';
-  // Incremental runs need a provider that accepts existing categories.
-  if (mode === 'auto' && ACTIVE_PROVIDER === 'codex') {
+  if (mode === 'auto') {
     const nonAgentGroups = windowGroups.filter(group => !agentGroups.has(group.id));
     existing = await existingGroupCategories(nonAgentGroups, allTabs);
     const ungroupedTabs = validTabs.filter(tab => tab.groupId === -1);
@@ -251,11 +247,9 @@ async function handleTidy({ mode = 'auto' } = {}) {
   if (runMode === 'full' && tabsToClassify.length < 2) return { error: 'Need at least 2 eligible tabs' };
 
   console.log(`[tidy] Classifying ${tabsToClassify.length} tabs (${runMode})...`);
-  const classification = ACTIVE_PROVIDER === 'codex'
-    ? (runMode === 'incremental'
-        ? await classifyTabsCodex(tabsToClassify, { existingCategories: existing.categories })
-        : await classifyTabsCodex(tabsToClassify))
-    : await classifyTabs(tabsToClassify, DEFAULT_MODEL);
+  const classification = runMode === 'incremental'
+    ? await classifyTabsCodex(tabsToClassify, { existingCategories: existing.categories })
+    : await classifyTabsCodex(tabsToClassify);
   console.log('[tidy] Result:', JSON.stringify(classification));
   warnings.push(...(classification.warnings || []));
 

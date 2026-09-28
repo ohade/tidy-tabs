@@ -8,7 +8,7 @@ const repoRoot = path.resolve(__dirname, '..');
 
 function loadCodex(globals = {}) {
   const context = vm.createContext({ AbortSignal, URL, console, ...globals });
-  for (const relativePath of ['lib/ollama.js', 'lib/codex.js']) {
+  for (const relativePath of ['lib/partition.js', 'lib/codex.js']) {
     const source = fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
     vm.runInContext(source, context, { filename: relativePath });
   }
@@ -352,4 +352,60 @@ test('isErrorTab ignores pages that only mention an HTTP error', () => {
   assert.equal(isError('404 Not Found'), true);
   assert.equal(isError('Error 404 (Not Found)!!1'), true);
   assert.equal(isError('Access Denied'), true);
+});
+
+test('classifyTabsCodex sends only the origin and path of each URL to the model', async () => {
+  const requests = [];
+  const context = loadCodex({
+    chrome: {
+      runtime: {
+        lastError: null,
+        sendNativeMessage: (_host, message, callback) => {
+          requests.push(message);
+          callback({ ok: true, groups: [{ name: 'Release Work', color: 'blue', tab_ids: [1, 2, 3] }] });
+        }
+      }
+    }
+  });
+  context.tabs = [
+    { title: 'Signed download', url: 'https://user:pass@files.example/report.csv?X-Amz-Signature=secret#page=2' },
+    { title: 'Dashboard', url: 'https://grafana.example/d/abc/release-health?orgId=1&from=now-6h' },
+    { title: 'Local notes', url: 'file:///tmp/notes.html?draft=1' }
+  ];
+
+  const result = await vm.runInContext('classifyTabsCodex(tabs)', context);
+  assert.equal(JSON.stringify(requests[0].tabs.map(tab => tab.url)), JSON.stringify([
+    'https://files.example/report.csv',
+    'https://grafana.example/d/abc/release-health',
+    'file:///tmp/notes.html'
+  ]));
+  assert.doesNotMatch(JSON.stringify(requests), /secret|pass|orgId|draft/);
+  assert.equal(JSON.stringify(result.groups[0].tab_ids), JSON.stringify([1, 2, 3]));
+});
+
+test('exact partition validators reject duplicate, out-of-range, and vague groups', () => {
+  const context = loadCodex();
+  const valid = groups => vm.runInContext(`normalizeExactGroups(${JSON.stringify(groups)}, 3).valid`, context);
+  assert.equal(valid([{ name: 'A', color: 'blue', tab_ids: [1, 2] }, { name: 'B', color: 'green', tab_ids: [2, 3] }]), false);
+  assert.equal(valid([{ name: 'A', color: 'blue', tab_ids: [1, 2, 4] }, { name: 'B', color: 'green', tab_ids: [3] }]), false);
+  assert.equal(valid([{ name: 'Other', color: 'grey', tab_ids: [1, 2, 3] }]), false);
+  assert.equal(valid([{ name: 'Other Tabs', color: 'grey', tab_ids: [1, 2, 3] }]), false);
+  assert.equal(valid([{ name: 'General Web', color: 'grey', tab_ids: [1, 2, 3] }]), false);
+  assert.equal(valid([{ name: 'A', color: 'blue', tab_ids: [1, 2] }, { name: 'B', color: 'green', tab_ids: [3] }]), true);
+});
+
+test('classifyTabsCodex chunks large error groups without calling the model', async () => {
+  let requests = 0;
+  const context = loadCodex({
+    chrome: { runtime: { lastError: null, sendNativeMessage: () => { requests += 1; } } }
+  });
+  context.tabs = Array.from({ length: 16 }, (_, index) => ({
+    title: `Privacy error ${index + 1}`,
+    url: `https://error${index + 1}.example/`
+  }));
+
+  const result = await vm.runInContext('classifyTabsCodex(tabs)', context);
+  assert.equal(requests, 0);
+  assert.equal(JSON.stringify(result.groups.map(group => group.name)), JSON.stringify(['Errors', 'Errors 2']));
+  assert.equal(JSON.stringify(result.groups.map(group => group.tab_ids.length)), JSON.stringify([15, 1]));
 });
