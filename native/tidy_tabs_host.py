@@ -99,26 +99,42 @@ def format_tabs(tabs):
     return "\n".join(lines)
 
 
-def classification_prompt(tabs, strict_retry=False, allowed_categories=None):
-    minimum_group_count = (len(tabs) + 14) // 15
-    minimum_group_label = "group" if minimum_group_count == 1 else "groups"
-    retry_instruction = """
-This is a strict retry because the previous answer was rejected. Recount every input ID before answering and verify that the output is an exact partition.
-""" if strict_retry else ""
-    category_instruction = """
-- Use only the exact category names and matching colors listed below. Use each intent description to resolve overlapping-looking names.
-- A category may appear in multiple groups when needed to keep every group at 15 tabs or fewer; repeat its exact name without adding a suffix or modifier.
-
-Allowed categories:
-%s
-""" % "\n".join(
+def format_categories(categories):
+    return "\n".join(
         "- %s (%s): %s" % (
             clean_text(category.get("name"), 80),
             category.get("color"),
             clean_text(category.get("description"), 240),
         )
-        for category in (allowed_categories or [])
-    ) if allowed_categories else ""
+        for category in categories
+    )
+
+
+def classification_prompt(tabs, strict_retry=False, allowed_categories=None, allow_new_categories=False):
+    minimum_group_count = (len(tabs) + 14) // 15
+    minimum_group_label = "group" if minimum_group_count == 1 else "groups"
+    retry_instruction = """
+This is a strict retry because the previous answer was rejected. Recount every input ID before answering and verify that the output is an exact partition.
+""" if strict_retry else ""
+    if allowed_categories and allow_new_categories:
+        category_instruction = """
+- The user's existing tab groups are listed below. When a tab matches one's intent, use that group's exact name and color.
+- When no existing group fits, create a new specific group name instead of forcing the tab into a poor match. Do not create a near-duplicate of an existing group.
+- A group name may appear in multiple groups when needed to keep every group at 15 tabs or fewer; repeat its exact name without adding a suffix or modifier.
+
+Existing groups:
+%s
+""" % format_categories(allowed_categories)
+    elif allowed_categories:
+        category_instruction = """
+- Use only the exact category names and matching colors listed below. Use each intent description to resolve overlapping-looking names.
+- A category may appear in multiple groups when needed to keep every group at 15 tabs or fewer; repeat its exact name without adding a suffix or modifier.
+
+Allowed categories:
+%s
+""" % format_categories(allowed_categories)
+    else:
+        category_instruction = ""
     return """Group these browser tabs by the user's likely current project, task, or decision.
 
 Return only the JSON required by the supplied schema. Rules:
@@ -233,6 +249,8 @@ def run_codex(prompt, schema_path):
             )
         except subprocess.TimeoutExpired:
             return {"ok": False, "error": "Codex timed out after 150 seconds"}
+        except OSError as exc:
+            return {"ok": False, "error": "Codex failed to start: %s" % exc}
 
         if completed.returncode != 0 or not output_path.exists():
             detail = (completed.stderr or completed.stdout or "Codex produced no output").strip()
@@ -249,14 +267,14 @@ def classify(message):
     if error:
         return error
 
-    ready = status()
-    if not ready["ok"]:
-        return ready
-
+    # The extension checks readiness once per run; repeating it here would
+    # start an extra Codex process for every batch.
     allowed_categories = message.get("allowed_categories")
+    allow_new_categories = bool(message.get("allow_new_categories"))
     if allowed_categories is not None:
-        if not isinstance(allowed_categories, list) or not 2 <= len(allowed_categories) <= 30:
-            return {"ok": False, "error": "Expected between 2 and 30 allowed categories"}
+        minimum, maximum = (1, 60) if allow_new_categories else (2, 30)
+        if not isinstance(allowed_categories, list) or not minimum <= len(allowed_categories) <= maximum:
+            return {"ok": False, "error": "Expected between %d and %d allowed categories" % (minimum, maximum)}
         if any(
             not isinstance(category, dict)
             or not clean_text(category.get("name"), 80)
@@ -271,6 +289,7 @@ def classify(message):
             tabs,
             bool(message.get("strict_retry")),
             allowed_categories,
+            allow_new_categories,
         ),
         SCHEMA_PATH,
     )
@@ -288,10 +307,6 @@ def plan_categories(message):
     tabs, error = validate_tabs(message)
     if error:
         return error
-
-    ready = status()
-    if not ready["ok"]:
-        return ready
 
     result = run_codex(
         category_plan_prompt(tabs, bool(message.get("strict_retry"))),

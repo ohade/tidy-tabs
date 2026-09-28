@@ -1,23 +1,27 @@
 # Tidy Tabs
 
-One-click AI-powered Chrome tab organizer using Codex. Click the broom icon to merge non-incognito windows, reclassify all eligible tabs, create named and colored groups, and open a visible run report.
+One-click AI-powered Chrome tab organizer using Codex. Click the broom icon to sort new, ungrouped tabs into your existing groups (or new ones) and open a visible run report.
 
-Every click is a full re-tidy. Existing groups are ignored and replaced only after Codex returns a complete, valid classification.
+Right-click the broom and choose **Re-tidy all tabs** to merge non-incognito windows and regroup every eligible tab from scratch. Existing groups are replaced only after Codex returns a complete, valid classification.
 
 ## How It Works
 
 ```text
 Click broom icon
   -> Validate the local Codex native host
-  -> Collect eligible tab titles and URLs across non-incognito windows
-  -> For 50 tabs or fewer, send one schema-constrained classification request
-  -> For larger runs, create one shared taxonomy and classify batches of 50 against it
+  -> Collect eligible tabs across non-incognito windows (skip pinned tabs and Claude agent groups)
+  -> If named groups exist and 50 or fewer tabs are ungrouped:
+       classify only the ungrouped tabs, offering the existing groups as categories
+       add each tab to its existing group, or create a new group when none fits
+  -> Otherwise (or via Re-tidy all tabs), classify every eligible tab:
+       50 tabs or fewer: one schema-constrained classification request
+       more: one shared taxonomy, then batches of 50 classified in parallel
   -> Retry any invalid plan or batch once
   -> Validate that every tab appears exactly once; keep model-response groups at 15 tabs or fewer
-  -> Merge all non-incognito windows into one
-  -> Clear previous eligible groups
-  -> Create and collapse Chrome tab groups
-  -> Open a report with status, warnings, group counts, and a CSV export of grouped URLs
+  -> Skip tabs that were closed, navigated, or regrouped while the model ran
+  -> Full re-tidy only: merge windows and clear previous eligible groups
+  -> Create, fill, and collapse Chrome tab groups
+  -> Open (or refresh) the report with status, warnings, group counts, and a CSV export
 ```
 
 Recognizable browser error pages are separated deterministically and are not sent to the model. Other tab titles and URLs are sent to OpenAI through the authenticated Codex CLI.
@@ -59,7 +63,11 @@ Click the broom icon.
 - A red `!` badge indicates an error; the opened report contains the full error.
 - Invalid classifications include a privacy-safe, attempt-by-attempt explanation of omitted, duplicate, invented, oversized, vague, or malformed assignments.
 - Successful reports can download a CSV containing each tab's assigned group, color, title, and URL.
-- Existing eligible tab groups are replaced on every successful run, so clicking again re-tidies the browser.
+- A click adds new tabs to existing groups and leaves the rest alone. Nothing new to sort means no model call.
+- **Re-tidy all tabs** (right-click the broom) replaces every eligible group. It also runs automatically when there are no named groups yet or more than 50 ungrouped tabs.
+- Pinned tabs and groups owned by the Claude browser extension (`Claude`, `Claude (MCP)`, and their ⌛/🔔/✅ variants) are never moved or regrouped. That extension re-creates its group whenever a tab leaves it.
+- Tabs closed or changed while the model runs are skipped and listed as a warning instead of failing the run.
+- The report reuses its open tab instead of opening a new one each run.
 - If both classification attempts are invalid, the run stops before moving tabs or clearing groups.
 - The active provider is `ACTIVE_PROVIDER` in `background.js`.
 

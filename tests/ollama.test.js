@@ -6,7 +6,20 @@ const vm = require('node:vm');
 
 const repoRoot = path.resolve(__dirname, '..');
 
+// background.js registers menu listeners at load and stores run state.
+function withBackgroundDefaults(chrome) {
+  if (!chrome) return chrome;
+  return {
+    contextMenus: { create: () => {}, onClicked: { addListener: () => {} } },
+    storage: { local: { get: async () => ({}), set: async () => {} } },
+    ...chrome,
+    runtime: { onInstalled: { addListener: () => {} }, ...chrome.runtime },
+    tabs: chrome.tabs && { query: async () => [], ...chrome.tabs }
+  };
+}
+
 function loadScript(relativePath, globals = {}) {
+  if (relativePath === 'background.js') globals = { ...globals, chrome: withBackgroundDefaults(globals.chrome) };
   const context = vm.createContext({
     AbortSignal,
     URL,

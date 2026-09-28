@@ -258,3 +258,98 @@ test('classifyTabsCodex reports invalid shared category plans', async () => {
   });
   assert.equal(requests, 2);
 });
+
+test('classifyTabsCodex classifies large-set batches in parallel', async () => {
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const context = loadCodex({
+    chrome: {
+      runtime: {
+        lastError: null,
+        sendNativeMessage: (_host, message, callback) => {
+          if (message.action === 'plan') {
+            callback({
+              ok: true,
+              categories: [
+                { name: 'Development', description: 'Implementation work.', color: 'blue' },
+                { name: 'Reading', description: 'Reference material.', color: 'green' }
+              ]
+            });
+            return;
+          }
+          inFlight += 1;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          setTimeout(() => {
+            inFlight -= 1;
+            const ids = message.tabs.map(tab => tab.id);
+            callback({
+              ok: true,
+              groups: [
+                { name: 'Development', color: 'blue', tab_ids: ids.slice(0, 15) },
+                { name: 'Reading', color: 'green', tab_ids: ids.slice(15, 30) },
+                { name: 'Development', color: 'blue', tab_ids: ids.slice(30, 45) },
+                ...(ids.length > 45 ? [{ name: 'Reading', color: 'green', tab_ids: ids.slice(45) }] : [])
+              ].filter(group => group.tab_ids.length > 0)
+            });
+          }, 5);
+        }
+      }
+    },
+    setTimeout
+  });
+  context.tabs = Array.from({ length: 120 }, (_, index) => ({
+    title: `Tab ${index + 1}`,
+    url: `https://site${index + 1}.example/`
+  }));
+
+  const result = await vm.runInContext('classifyTabsCodex(tabs)', context);
+  assert.equal(maxInFlight, 3);
+  assert.equal(
+    JSON.stringify(result.groups.flatMap(group => group.tab_ids).sort((a, b) => a - b)),
+    JSON.stringify(Array.from({ length: 120 }, (_, index) => index + 1))
+  );
+});
+
+test('classifyTabsCodex adds tabs to existing groups and allows new ones', async () => {
+  let request;
+  const context = loadCodex({
+    chrome: {
+      runtime: {
+        lastError: null,
+        sendNativeMessage: (_host, message, callback) => {
+          request = message;
+          callback({
+            ok: true,
+            groups: [
+              { name: 'release regression', color: 'blue', tab_ids: [1] },
+              { name: 'Motorcycle Wiring', color: 'orange', tab_ids: [2] }
+            ]
+          });
+        }
+      }
+    }
+  });
+  context.tabs = [
+    { title: 'Release regression run 3', url: 'https://jenkins.example/release-regression/3' },
+    { title: 'Motorcycle wiring diagram', url: 'https://moto.example/wiring' }
+  ];
+  context.existing = [{ name: 'Release Regression', description: 'Release regression suites.', color: 'green' }];
+
+  const result = await vm.runInContext('classifyTabsCodex(tabs, { existingCategories: existing })', context);
+  assert.equal(request.allow_new_categories, true);
+  assert.equal(JSON.stringify(request.allowed_categories), JSON.stringify(context.existing));
+  assert.equal(JSON.stringify(result.groups.map(group => [group.name, group.color])), JSON.stringify([
+    ['Release Regression', 'green'], ['Motorcycle Wiring', 'orange']
+  ]));
+});
+
+test('isErrorTab ignores pages that only mention an HTTP error', () => {
+  const context = loadCodex();
+  const isError = title => vm.runInContext(`isErrorTab(${JSON.stringify({ title })})`, context);
+  assert.equal(isError('Fix error 500 in nginx - Stack Overflow'), false);
+  assert.equal(isError('How to debug a 404 not found response in Express'), false);
+  assert.equal(isError('Privacy error'), true);
+  assert.equal(isError('404 Not Found'), true);
+  assert.equal(isError('Error 404 (Not Found)!!1'), true);
+  assert.equal(isError('Access Denied'), true);
+});

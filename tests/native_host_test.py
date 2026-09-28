@@ -226,5 +226,71 @@ class NativeHostTest(unittest.TestCase):
         self.assertEqual(captured["command"][schema_index], str(HOST.CATEGORY_SCHEMA_PATH))
 
 
+    def test_classify_does_not_run_a_status_check_per_request(self):
+        completed = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+
+        def run(command, **kwargs):
+            output_index = command.index("--output-last-message") + 1
+            Path(command[output_index]).write_text(
+                '{"groups":[{"name":"Work","color":"blue","tab_ids":[1]}]}',
+                encoding="utf-8",
+            )
+            return completed
+
+        with (
+            mock.patch.object(HOST, "status", side_effect=AssertionError("status ran per request")),
+            mock.patch.object(HOST, "codex_path", return_value="/opt/homebrew/bin/codex"),
+            mock.patch.object(HOST.subprocess, "run", side_effect=run),
+        ):
+            result = HOST.classify(
+                {"tabs": [{"id": 1, "title": "Pull request", "url": "https://example.test"}]}
+            )
+
+        self.assertTrue(result["ok"])
+
+    def test_classify_reports_a_codex_binary_that_cannot_start(self):
+        with (
+            mock.patch.object(HOST, "codex_path", return_value="/nonexistent/codex"),
+            mock.patch.object(HOST.subprocess, "run", side_effect=FileNotFoundError("no such file")),
+        ):
+            result = HOST.classify(
+                {"tabs": [{"id": 1, "title": "Pull request", "url": "https://example.test"}]}
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertIn("Codex failed to start", result["error"])
+
+    def test_incremental_classify_offers_existing_groups_and_allows_new_ones(self):
+        completed = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        captured = {}
+
+        def run(command, **kwargs):
+            captured.update(kwargs)
+            output_index = command.index("--output-last-message") + 1
+            Path(command[output_index]).write_text(
+                '{"groups":[{"name":"Motorcycle Wiring","color":"orange","tab_ids":[1]}]}',
+                encoding="utf-8",
+            )
+            return completed
+
+        with (
+            mock.patch.object(HOST, "status", return_value={"ok": True}),
+            mock.patch.object(HOST, "codex_path", return_value="/opt/homebrew/bin/codex"),
+            mock.patch.object(HOST.subprocess, "run", side_effect=run),
+        ):
+            result = HOST.classify({
+                "tabs": [{"id": 1, "title": "Motorcycle wiring", "url": "https://moto.example"}],
+                "allowed_categories": [
+                    {"name": "Release Regression", "description": "Release regression suites.", "color": "green"}
+                ],
+                "allow_new_categories": True,
+            })
+
+        self.assertTrue(result["ok"])
+        prompt = captured["input"]
+        self.assertIn("- Release Regression (green): Release regression suites.", prompt)
+        self.assertIn("create a new specific group", prompt)
+        self.assertNotIn("Use only the exact category names", prompt)
+
 if __name__ == "__main__":
     unittest.main()
