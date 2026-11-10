@@ -136,11 +136,20 @@
     return answer;
   }
 
+  // A filter animation on the element itself, so Zen's !important tab backgrounds cannot hide it.
+  // Every keyframe has the same filter list so the browser can blend between them.
   function glow(element, delay) {
-    setTimeout(() => {
-      element.setAttribute("zen-tidy-glow", "true");
-      setTimeout(() => element.removeAttribute("zen-tidy-glow"), GLOW_MS);
-    }, delay);
+    const accent =
+      getComputedStyle(document.documentElement).getPropertyValue("--zen-primary-color").trim() || "#8ab4f8";
+    const off = "drop-shadow(0 0 0 transparent) drop-shadow(0 0 0 transparent) brightness(1)";
+    element.animate(
+      [
+        { filter: off },
+        { filter: `drop-shadow(0 0 10px ${accent}) drop-shadow(0 0 3px white) brightness(1.8)`, offset: 0.15 },
+        { filter: off },
+      ],
+      { duration: GLOW_MS, delay, easing: "ease-out" }
+    );
   }
 
   // Slides each tab from where it was to where it landed (the FLIP technique), then glows it.
@@ -158,9 +167,14 @@
           { duration: SLIDE_MS, delay, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)", fill: "backwards" }
         );
       }
-      glow(tab, delay + SLIDE_MS / 2);
+      if (to.height) {
+        glow(tab, delay + SLIDE_MS / 2);
+      }
     });
-    touchedFolders.forEach(folder => glow(folder, SLIDE_MS));
+    // A tab filed into a collapsed folder is hidden, so its folder's header glows instead.
+    touchedFolders.forEach(folder =>
+      glow(folder.querySelector(":scope > .tab-group-label-container") || folder, SLIDE_MS)
+    );
   }
 
   function applyPlan(plan, workspaceId, tabs) {

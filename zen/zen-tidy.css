@@ -38,22 +38,6 @@
   to { transform: rotate(25deg) translateX(1px); }
 }
 
-/* Tabs and folders the broom just touched glow, then fade back. */
-.tabbrowser-tab[zen-tidy-glow] .tab-background,
-zen-folder[zen-tidy-glow] > .tab-group-label-container {
-  animation: zen-tidy-glow 1.8s ease-out;
-}
-@keyframes zen-tidy-glow {
-  0% {
-    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.85), 0 0 18px 4px var(--zen-primary-color, #8ab4f8);
-    background-color: color-mix(in srgb, var(--zen-primary-color, #8ab4f8) 40%, transparent);
-  }
-  100% {
-    box-shadow: 0 0 0 1px transparent, 0 0 18px 4px transparent;
-    background-color: transparent;
-  }
-}
-
 zen-folder[zen-tidy-color="grey"] { --zen-tidy-color: #8a8f98; }
 zen-folder[zen-tidy-color="blue"] { --zen-tidy-color: #1a73e8; }
 zen-folder[zen-tidy-color="red"] { --zen-tidy-color: #d93025; }
