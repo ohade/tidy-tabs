@@ -145,7 +145,7 @@
     element.animate(
       [
         { filter: off },
-        { filter: `drop-shadow(0 0 10px ${accent}) drop-shadow(0 0 3px white) brightness(1.8)`, offset: 0.15 },
+        { filter: `drop-shadow(0 0 5px ${accent}) drop-shadow(0 0 2px white) brightness(1.8)`, offset: 0.15 },
         { filter: off },
       ],
       { duration: GLOW_MS, delay, easing: "ease-out" }
@@ -167,8 +167,10 @@
           { duration: SLIDE_MS, delay, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)", fill: "backwards" }
         );
       }
-      if (to.height) {
-        glow(tab, delay + SLIDE_MS / 2);
+      // Glow only once the tab has landed, so it does not light up the rows it slides past,
+      // and only where it stays visible: a tab filed into a collapsed folder is hidden.
+      if (to.height && !tab.group?.collapsed) {
+        glow(tab, delay + SLIDE_MS);
       }
     });
     // A tab filed into a collapsed folder is hidden, so its folder's header glows instead.
