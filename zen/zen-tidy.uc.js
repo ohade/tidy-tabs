@@ -1,0 +1,170 @@
+// Zen Tidy: a broom next to each Space's clean button. It sends the Space's unpinned tabs to
+// Claude Haiku through zen_tidy_claude.py, then files them into colored folders with short names.
+// The repository path comes from the zen.tidy.repo-dir pref, which install.sh sets.
+(async () => {
+  const REPO_DIR = Services.prefs.getStringPref("zen.tidy.repo-dir", "");
+  const COLORS_PREF = "zen.tidy.folder-colors";
+  const PYTHON_CANDIDATES = ["/opt/homebrew/bin/python3", "/usr/bin/python3"];
+  const ERROR_DISPLAY_MS = 10000;
+
+  await window.delayedStartupPromise;
+  await gZenWorkspaces.promiseInitialized;
+  if (!REPO_DIR || gZenWorkspaces.privateWindowOrDisabled) {
+    return;
+  }
+
+  // file:// URIs are untrusted for loadSubScript, so serve the repository as resource://zen-tidy-repo/.
+  Services.io
+    .getProtocolHandler("resource")
+    .QueryInterface(Ci.nsIResProtocolHandler)
+    .setSubstitution("zen-tidy-repo", Services.io.newURI(PathUtils.toFileURI(REPO_DIR) + "/"));
+  const lib = {};
+  for (const file of ["lib/partition.js", "zen/tidy-plan.js"]) {
+    Services.scriptloader.loadSubScript("resource://zen-tidy-repo/" + file, lib);
+  }
+  const { Subprocess } = ChromeUtils.importESModule("resource://gre/modules/Subprocess.sys.mjs");
+
+  function readFolderColors() {
+    try {
+      return JSON.parse(Services.prefs.getStringPref(COLORS_PREF, "{}"));
+    } catch {
+      return {};
+    }
+  }
+
+  function paintFolder(folder, colors = readFolderColors()) {
+    const color = colors[folder.id];
+    if (color) {
+      folder.setAttribute("zen-tidy-color", color);
+    }
+  }
+
+  function addBroom(separator) {
+    const cleanButton = separator.querySelector(".zen-workspace-close-unpinned-tabs-button");
+    if (!cleanButton || separator.querySelector(".zen-tidy-button")) {
+      return;
+    }
+    const broom = document.createXULElement("toolbarbutton");
+    broom.className = "zen-tidy-button";
+    broom.setAttribute("tooltiptext", "Tidy tabs into folders with Claude");
+    broom.addEventListener("command", () => tidy(broom));
+    cleanButton.before(broom);
+  }
+
+  function decorate(root) {
+    root.querySelectorAll(".pinned-tabs-container-separator").forEach(addBroom);
+    const colors = readFolderColors();
+    root.querySelectorAll("zen-folder").forEach(folder => paintFolder(folder, colors));
+  }
+
+  function tidyCandidates(workspaceId) {
+    return gBrowser.tabs.filter(
+      tab =>
+        !tab.pinned &&
+        !tab.closing &&
+        !tab.hasAttribute("zen-essential") &&
+        !tab.hasAttribute("zen-empty-tab") &&
+        !tab.hasAttribute("zen-glance-tab") &&
+        !tab.group?.hasAttribute("split-view-group") &&
+        tab.getAttribute("zen-workspace-id") === workspaceId
+    );
+  }
+
+  async function askHaiku(tabs) {
+    let python = null;
+    for (const candidate of PYTHON_CANDIDATES) {
+      if (await IOUtils.exists(candidate)) {
+        python = candidate;
+        break;
+      }
+    }
+    if (!python) {
+      throw new Error("python3 not found");
+    }
+    const proc = await Subprocess.call({
+      command: python,
+      arguments: [PathUtils.join(REPO_DIR, "zen", "zen_tidy_claude.py")],
+      environmentAppend: true,
+      stderr: "pipe",
+    });
+    const request = {
+      tabs: tabs.map((tab, index) => ({
+        id: index + 1,
+        title: tab.label,
+        url: tab.linkedBrowser?.currentURI?.spec || "",
+      })),
+    };
+    await proc.stdin.write(JSON.stringify(request));
+    await proc.stdin.close();
+    let output = "";
+    let chunk;
+    while ((chunk = await proc.stdout.readString())) {
+      output += chunk;
+    }
+    await proc.wait();
+    let answer;
+    try {
+      answer = JSON.parse(output);
+    } catch {
+      throw new Error("helper printed no JSON: " + output.slice(0, 200));
+    }
+    if (!answer.ok) {
+      throw new Error(answer.error || "helper failed");
+    }
+    return answer;
+  }
+
+  function applyPlan(plan, workspaceId) {
+    for (const { tab, label } of plan.renames) {
+      tab.zenStaticLabel = label;
+      gBrowser._setTabLabel(tab, label, { _zenChangeLabelFlag: true });
+    }
+    const colors = readFolderColors();
+    for (const { name, color, tabs } of plan.folders) {
+      const folder = gZenFolders.createFolder(tabs, { label: name, workspaceId, renameFolder: false });
+      colors[folder.id] = color;
+      paintFolder(folder, colors);
+    }
+    Services.prefs.setStringPref(COLORS_PREF, JSON.stringify(colors));
+  }
+
+  async function tidy(broom) {
+    if (broom.hasAttribute("tidy-state")) {
+      return;
+    }
+    const workspaceId = broom.closest("[zen-workspace-id]")?.getAttribute("zen-workspace-id");
+    const tabs = tidyCandidates(workspaceId);
+    if (tabs.length < 2) {
+      return;
+    }
+    broom.setAttribute("tidy-state", "busy");
+    try {
+      const plan = lib.buildTidyPlan(tabs, await askHaiku(tabs));
+      applyPlan(plan, workspaceId);
+      broom.removeAttribute("tidy-state");
+      broom.setAttribute(
+        "tooltiptext",
+        `Last tidy: ${plan.folders.length} folders, ${plan.renames.length} renamed, ${plan.ungrouped} left`
+      );
+    } catch (error) {
+      console.error("Zen Tidy failed", error);
+      broom.setAttribute("tidy-state", "error");
+      broom.setAttribute("tooltiptext", "Tidy failed: " + error.message);
+      setTimeout(() => broom.removeAttribute("tidy-state"), ERROR_DISPLAY_MS);
+    }
+  }
+
+  decorate(document);
+  new MutationObserver(records => {
+    for (const record of records) {
+      for (const node of record.addedNodes) {
+        if (node.nodeType === Node.ELEMENT_NODE) {
+          if (node.localName === "zen-folder") {
+            paintFolder(node);
+          }
+          decorate(node);
+        }
+      }
+    }
+  }).observe(document.documentElement, { childList: true, subtree: true });
+})().catch(error => console.error("Zen Tidy init failed", error));

@@ -1,0 +1,54 @@
+/* Zen Tidy: broom button next to the clean button, and per-folder colors. */
+.zen-tidy-button {
+  /* Firefox ignores context-fill in data: images, so the icon comes from the resource:// alias
+     that zen-tidy.uc.js registers before it adds the button. */
+  list-style-image: url("resource://zen-tidy-repo/zen/broom.svg");
+  -moz-context-properties: fill, fill-opacity !important;
+  /* Grey at rest so it shows on a dark sidebar, full contrast on hover. */
+  color: light-dark(#6b6f76, #9aa0a6) !important;
+  fill: currentColor !important;
+  transition: color 120ms ease;
+}
+.zen-tidy-button:hover,
+.zen-tidy-button[tidy-state="busy"] {
+  color: light-dark(#000000, #ffffff) !important;
+}
+.zen-tidy-button .toolbarbutton-icon {
+  fill: currentColor !important;
+  transform-origin: 50% 90%;
+}
+/* Bigger icons for the broom and Zen's Clear button, which sit side by side. */
+.zen-tidy-button .toolbarbutton-icon,
+.zen-workspace-close-unpinned-tabs-button .toolbarbutton-icon {
+  width: 20px !important;
+  height: 20px !important;
+}
+/* A sweep while the button is pressed, then a steady sweep while Claude works. */
+.zen-tidy-button:active .toolbarbutton-icon {
+  animation: zen-tidy-sweep 0.2s ease-in-out infinite alternate;
+}
+.zen-tidy-button[tidy-state="busy"] .toolbarbutton-icon {
+  animation: zen-tidy-sweep 0.35s ease-in-out infinite alternate;
+}
+.zen-tidy-button[tidy-state="error"] {
+  color: #d93025 !important;
+}
+@keyframes zen-tidy-sweep {
+  from { transform: rotate(-25deg) translateX(-1px); }
+  to { transform: rotate(25deg) translateX(1px); }
+}
+
+zen-folder[zen-tidy-color="grey"] { --zen-tidy-color: #8a8f98; }
+zen-folder[zen-tidy-color="blue"] { --zen-tidy-color: #1a73e8; }
+zen-folder[zen-tidy-color="red"] { --zen-tidy-color: #d93025; }
+zen-folder[zen-tidy-color="yellow"] { --zen-tidy-color: #f9ab00; }
+zen-folder[zen-tidy-color="green"] { --zen-tidy-color: #1e8e3e; }
+zen-folder[zen-tidy-color="pink"] { --zen-tidy-color: #d01884; }
+zen-folder[zen-tidy-color="purple"] { --zen-tidy-color: #9334e6; }
+zen-folder[zen-tidy-color="cyan"] { --zen-tidy-color: #007b83; }
+zen-folder[zen-tidy-color="orange"] { --zen-tidy-color: #fa903e; }
+zen-folder[zen-tidy-color] > .tab-group-label-container .tab-group-folder-icon {
+  --zen-folder-behind-bgcolor: color-mix(in srgb, var(--zen-tidy-color) 70%, black) !important;
+  --zen-folder-front-bgcolor: var(--zen-tidy-color) !important;
+  --zen-folder-stroke: color-mix(in srgb, var(--zen-tidy-color) 50%, black) !important;
+}
