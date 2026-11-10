@@ -6,6 +6,7 @@
   const COLORS_PREF = "zen.tidy.folder-colors";
   const PYTHON_CANDIDATES = ["/opt/homebrew/bin/python3", "/usr/bin/python3"];
   const ERROR_DISPLAY_MS = 10000;
+  const MAX_FOLDER_SAMPLE_TITLES = 5;
 
   await window.delayedStartupPromise;
   await gZenWorkspaces.promiseInitialized;
@@ -70,7 +71,23 @@
     );
   }
 
-  async function askHaiku(tabs) {
+  // The Space's folders, so the model can file tabs into them before making new ones.
+  function existingFolders(workspaceId) {
+    const colors = readFolderColors();
+    return [...document.querySelectorAll("zen-folder")]
+      .filter(folder => folder.getAttribute("zen-workspace-id") === workspaceId && folder.label)
+      .map(folder => ({
+        element: folder,
+        name: folder.label,
+        color: colors[folder.id] || "grey",
+        titles: folder.tabs
+          .filter(tab => !tab.hasAttribute("zen-empty-tab"))
+          .slice(0, MAX_FOLDER_SAMPLE_TITLES)
+          .map(tab => tab.label),
+      }));
+  }
+
+  async function askHaiku(tabs, folders) {
     let python = null;
     for (const candidate of PYTHON_CANDIDATES) {
       if (await IOUtils.exists(candidate)) {
@@ -93,6 +110,7 @@
         title: tab.label,
         url: tab.linkedBrowser?.currentURI?.spec || "",
       })),
+      folders: folders.map(({ name, color, titles }) => ({ name, color, titles })),
     };
     await proc.stdin.write(JSON.stringify(request));
     await proc.stdin.close();
@@ -119,6 +137,11 @@
       tab.zenStaticLabel = label;
       gBrowser._setTabLabel(tab, label, { _zenChangeLabelFlag: true });
     }
+    for (const { folder, tabs } of plan.moves) {
+      // Folders live in the pinned area, so pin first, as gZenFolders.createFolder does.
+      tabs.forEach(tab => gBrowser.pinTab(tab));
+      folder.addTabs(tabs);
+    }
     const colors = readFolderColors();
     for (const { name, color, tabs } of plan.folders) {
       const folder = gZenFolders.createFolder(tabs, { label: name, workspaceId, renameFolder: false });
@@ -134,17 +157,25 @@
     }
     const workspaceId = broom.closest("[zen-workspace-id]")?.getAttribute("zen-workspace-id");
     const tabs = tidyCandidates(workspaceId);
-    if (tabs.length < 2) {
+    if (!tabs.length) {
       return;
     }
     broom.setAttribute("tidy-state", "busy");
     try {
-      const plan = lib.buildTidyPlan(tabs, await askHaiku(tabs));
+      const folders = existingFolders(workspaceId);
+      const answer = await askHaiku(tabs, folders);
+      const plan = lib.buildTidyPlan(
+        tabs,
+        answer,
+        folders.map(({ name, element }) => ({ name, folder: element }))
+      );
       applyPlan(plan, workspaceId);
       broom.removeAttribute("tidy-state");
+      const moved = plan.moves.reduce((count, move) => count + move.tabs.length, 0);
       broom.setAttribute(
         "tooltiptext",
-        `Last tidy: ${plan.folders.length} folders, ${plan.renames.length} renamed, ${plan.ungrouped} left`
+        `Last tidy: ${moved} into existing folders, ${plan.folders.length} new folders, ` +
+          `${plan.renames.length} renamed, ${plan.ungrouped} left`
       );
     } catch (error) {
       console.error("Zen Tidy failed", error);

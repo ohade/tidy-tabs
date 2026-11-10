@@ -12,7 +12,8 @@ function loadPlan() {
     vm.runInContext(fs.readFileSync(path.join(repoRoot, file), 'utf8'), context, { filename: file });
   }
   // Plain copies, because arrays built inside the sandbox fail strict deep-equal across realms.
-  return (tabList, answer) => JSON.parse(JSON.stringify(context.buildTidyPlan(tabList, answer)));
+  return (tabList, answer, existingFolders) =>
+    JSON.parse(JSON.stringify(context.buildTidyPlan(tabList, answer, existingFolders)));
 }
 
 const tabs = ['jira', 'pr', 'notes', 'reddit'].map(name => ({ name }));
@@ -56,6 +57,34 @@ test('renames tabs with cleaned short names and ignores empty or unknown entries
     ['jira', 'ABC-1 ticket'],
     ['notes', 'x'.repeat(40)]
   ]);
+});
+
+test('files a group named like an existing folder into that folder instead of a new one', () => {
+  const existing = [{ name: 'Israeli News Browsing', folder: { id: 'news' } }];
+  const plan = loadPlan()(tabs, {
+    groups: [
+      { name: ' israeli news browsing ', color: 'grey', tab_ids: [4] },
+      { name: 'Zen Mods', color: 'purple', tab_ids: [1, 2, 3] }
+    ],
+    names: []
+  }, existing);
+  assert.deepEqual(plan.folders.map(f => f.name), ['Zen Mods']);
+  assert.deepEqual(plan.moves.map(m => [m.folder.id, m.tabs.map(t => t.name)]), [['news', ['reddit']]]);
+});
+
+test('groups that share a name end up in one folder', () => {
+  const existing = [{ name: 'Israeli News Browsing', folder: { id: 'news' } }];
+  const plan = loadPlan()(tabs, {
+    groups: [
+      { name: 'Zen Mods', color: 'purple', tab_ids: [1] },
+      { name: 'Israeli News Browsing', color: 'grey', tab_ids: [2] },
+      { name: 'Zen Mods', color: 'purple', tab_ids: [3] },
+      { name: 'Israeli News Browsing', color: 'grey', tab_ids: [4] }
+    ],
+    names: []
+  }, existing);
+  assert.deepEqual(plan.folders.map(f => [f.name, f.tabs.map(t => t.name)]), [['Zen Mods', ['jira', 'notes']]]);
+  assert.deepEqual(plan.moves.map(m => [m.folder.id, m.tabs.map(t => t.name)]), [['news', ['pr', 'reddit']]]);
 });
 
 test('unknown colors fall back to grey', () => {

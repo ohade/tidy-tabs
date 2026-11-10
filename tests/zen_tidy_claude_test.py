@@ -32,6 +32,16 @@ class PromptTest(unittest.TestCase):
         self.assertIn("short_name", prompt)
         self.assertIn("1. ABC-123 fix login - Jira", prompt)
 
+    def test_prompt_lists_existing_folders_and_allows_new_ones(self):
+        folders = [{"name": "Israeli News", "color": "grey", "titles": ["ynet front page", "haaretz"]}]
+        prompt = helper.build_prompt(TABS, folders)
+        self.assertIn("Existing groups:", prompt)
+        self.assertIn("- Israeli News (grey): ynet front page; haaretz", prompt)
+        self.assertIn("When no existing group fits, create a new specific group", prompt)
+
+    def test_prompt_without_folders_has_no_existing_group_section(self):
+        self.assertNotIn("Existing groups:", helper.build_prompt(TABS, []))
+
 
 class RunClaudeTest(unittest.TestCase):
     def test_runs_haiku_without_tools_hooks_or_mcp_and_returns_structured_output(self):
@@ -75,6 +85,12 @@ class MainTest(unittest.TestCase):
             code, payload = self.run_main(json.dumps({"tabs": TABS}))
         self.assertEqual(code, 0)
         self.assertEqual(payload, {"ok": True, **ANSWER})
+
+    def test_sends_existing_folders_to_claude(self):
+        folders = [{"name": "Israeli News", "color": "grey", "titles": ["ynet"]}]
+        with mock.patch.object(helper, "run_claude", return_value=ANSWER) as run:
+            self.run_main(json.dumps({"tabs": TABS, "folders": folders}))
+        self.assertIn("- Israeli News (grey): ynet", run.call_args.args[0])
 
     def test_rejects_non_consecutive_tab_ids(self):
         bad = [dict(TABS[0], id=2)]

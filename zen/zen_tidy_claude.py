@@ -67,8 +67,25 @@ def claude_binary():
     return os.environ.get("ZEN_TIDY_CLAUDE_BIN", "/opt/homebrew/bin/claude")
 
 
-def build_prompt(tabs):
-    return classification_prompt(tabs) + SHORT_NAME_RULES
+def existing_groups(folders):
+    """Turns Zen's folders [{name, color, titles}] into the prompt's existing-group entries."""
+    groups = []
+    for folder in folders if isinstance(folders, list) else []:
+        if not isinstance(folder, dict) or not str(folder.get("name") or "").strip():
+            continue
+        titles = [str(title) for title in folder.get("titles") or [] if str(title).strip()]
+        groups.append({
+            "name": str(folder["name"]).strip(),
+            "color": folder.get("color") if folder.get("color") in COLORS else "grey",
+            "description": "; ".join(titles) or "no tabs yet",
+        })
+    return groups
+
+
+def build_prompt(tabs, folders=()):
+    groups = existing_groups(list(folders))
+    prompt = classification_prompt(tabs, allowed_categories=groups or None, allow_new_categories=bool(groups))
+    return prompt + SHORT_NAME_RULES
 
 
 def run_claude(prompt):
@@ -117,7 +134,7 @@ def main():
         print(json.dumps(error))
         return 1
     try:
-        answer = run_claude(build_prompt(tabs))
+        answer = run_claude(build_prompt(tabs, message.get("folders") or []))
     except ClaudeError as failure:
         print(json.dumps({"ok": False, "error": str(failure)}))
         return 1
