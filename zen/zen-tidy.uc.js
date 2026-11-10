@@ -7,6 +7,10 @@
   const PYTHON_CANDIDATES = ["/opt/homebrew/bin/python3", "/usr/bin/python3"];
   const ERROR_DISPLAY_MS = 10000;
   const MAX_FOLDER_SAMPLE_TITLES = 5;
+  const SLIDE_MS = 550;
+  const STAGGER_MS = 60;
+  const MAX_STAGGER_MS = 900;
+  const GLOW_MS = 1800;
 
   await window.delayedStartupPromise;
   await gZenWorkspaces.promiseInitialized;
@@ -132,23 +136,55 @@
     return answer;
   }
 
-  function applyPlan(plan, workspaceId) {
+  function glow(element, delay) {
+    setTimeout(() => {
+      element.setAttribute("zen-tidy-glow", "true");
+      setTimeout(() => element.removeAttribute("zen-tidy-glow"), GLOW_MS);
+    }, delay);
+  }
+
+  // Slides each tab from where it was to where it landed (the FLIP technique), then glows it.
+  function animateTidy(tabs, startRects, touchedFolders) {
+    tabs.forEach((tab, index) => {
+      const delay = Math.min(index * STAGGER_MS, MAX_STAGGER_MS);
+      const from = startRects.get(tab);
+      const to = tab.getBoundingClientRect();
+      if (from?.height && to.height) {
+        tab.animate(
+          [
+            { transform: `translateY(${from.top - to.top}px) scale(0.96)`, opacity: 0.5 },
+            { transform: "none", opacity: 1 },
+          ],
+          { duration: SLIDE_MS, delay, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)", fill: "backwards" }
+        );
+      }
+      glow(tab, delay + SLIDE_MS / 2);
+    });
+    touchedFolders.forEach(folder => glow(folder, SLIDE_MS));
+  }
+
+  function applyPlan(plan, workspaceId, tabs) {
+    const startRects = new Map(tabs.map(tab => [tab, tab.getBoundingClientRect()]));
+    const touchedFolders = new Set();
     for (const { tab, label } of plan.renames) {
       tab.zenStaticLabel = label;
       gBrowser._setTabLabel(tab, label, { _zenChangeLabelFlag: true });
     }
-    for (const { folder, tabs } of plan.moves) {
+    for (const { folder, tabs: folderTabs } of plan.moves) {
       // Folders live in the pinned area, so pin first, as gZenFolders.createFolder does.
-      tabs.forEach(tab => gBrowser.pinTab(tab));
-      folder.addTabs(tabs);
+      folderTabs.forEach(tab => gBrowser.pinTab(tab));
+      folder.addTabs(folderTabs);
+      touchedFolders.add(folder);
     }
     const colors = readFolderColors();
-    for (const { name, color, tabs } of plan.folders) {
-      const folder = gZenFolders.createFolder(tabs, { label: name, workspaceId, renameFolder: false });
+    for (const { name, color, tabs: folderTabs } of plan.folders) {
+      const folder = gZenFolders.createFolder(folderTabs, { label: name, workspaceId, renameFolder: false });
       colors[folder.id] = color;
       paintFolder(folder, colors);
+      touchedFolders.add(folder);
     }
     Services.prefs.setStringPref(COLORS_PREF, JSON.stringify(colors));
+    animateTidy(tabs, startRects, touchedFolders);
   }
 
   async function tidy(broom) {
@@ -169,7 +205,7 @@
         answer,
         folders.map(({ name, element }) => ({ name, folder: element }))
       );
-      applyPlan(plan, workspaceId);
+      applyPlan(plan, workspaceId, tabs);
       broom.removeAttribute("tidy-state");
       const moved = plan.moves.reduce((count, move) => count + move.tabs.length, 0);
       broom.setAttribute(
